@@ -8,6 +8,8 @@
 	<string>TermHub</string>
 	<key>CFBundleExecutable</key>
 	<string>TermHub</string>
+	<key>CFBundleIconFile</key>
+	<string>Icon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.termhub.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>

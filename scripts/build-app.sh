@@ -26,6 +26,9 @@ if [[ -d "${BUILD_DIR}/${CONFIG}/TermHub.resources" ]]; then
   cp -R "${BUILD_DIR}/${CONFIG}/TermHub.resources/." "${APP_DIR}/Contents/Resources/"
 fi
 
+# 应用图标（独立于 SwiftPM 资源，配合 Info.plist 的 CFBundleIconFile）
+cp App/Resources/Icon.icns "${APP_DIR}/Contents/Resources/Icon.icns"
+
 echo "==> ad-hoc 签名"
 codesign --force --sign - "$APP_DIR"
 
