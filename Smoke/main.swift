@@ -172,6 +172,41 @@ let proxyParts: (host: String, port: Int)? = {
     return (String(parts[0]), port)
 }()
 
+// --stats-fixture：离线校验磁盘 I/O 解析数学（不连网）
+if args.contains("--stats-fixture") {
+    // 两拍 /proc/diskstats：间隔 2s 的理想数据
+    // 字段: major minor name rcm rm rs rms wcm wm ws wms iop msio wms
+    let t1 = """
+    8       0 sda 1180 12 48000 960 220 5 12000 880 0 1780 1840
+    259     0 nvme0n1 5000 30 200000 1500 900 8 60000 720 0 2100 2220
+    7       0 loop0 10 0 80 2 0 0 0 0 0 2 2
+    8       1 sda1 900 8 30000 700 200 4 11000 800 0 1400 1500
+    """
+    let t2 = """
+    8       0 sda 1280 12 56000 1060 320 5 16000 1040 0 2040 2100
+    259     0 nvme0n1 5400 30 232000 1620 1000 8 64000 780 0 2340 2400
+    7       0 loop0 10 0 80 2 0 0 0 0 0 2 2
+    8       1 sda1 980 8 36000 760 280 4 15000 940 0 1620 1700
+    """
+    func section(_ name: String, _ body: String) -> String { "=\(name)=\n\(body)" }
+    let base = section("LOAD", "0.10 0.20 0.15 1/100 12345\n")
+        + section("CPU", "cpu  100 0 50 850 0 0 0 0\n")
+        + section("MEM", "Mem: 8000000000 1000000000 6500000000 0 500000000 400000000 100000000\n")
+        + section("DISK", "/dev/sda 1000000000000 400000000000 600000000000 5% /\n")
+        + section("NET", "  eth0: 1000000 800 0 0 0 0 0 0 500000 700 0 0 0 0 0 0\n")
+        + section("UP", "86400.00 100000.00\n")
+    let now = Date()
+    let first = ServerStatsParser.parse(output: base + section("DISKIO", t1), previous: nil, now: now)
+    let second = ServerStatsParser.parse(output: base + section("DISKIO", t2), previous: first.sample, now: now + 2)
+    print("== 磁盘 I/O 解析夹具（间隔 2s）==")
+    print("设备数: \(second.stats.diskIO.count)（应为 2：sda + nvme0n1；loop/sda1 被过滤）")
+    for io in second.stats.diskIO {
+        // sda 期望: 读 8000*512/2=2.0MB/s 写 4000*512/2=1.0MB/s IOPS r50/w50 await=(100+160)/100=2.6ms util=260/2000=13%
+        print("  💿 \(io.device): 读\(String(format: "%.1f", io.readBytesPerSec/1024/1024))MB/s 写\(String(format: "%.1f", io.writeBytesPerSec/1024/1024))MB/s IOPS r\(Int(io.readsPerSec))/w\(Int(io.writesPerSec)) 耗时\(io.awaitMs.map { String(format: "%.2f", $0) } ?? "—")ms util=\(io.utilPercent.map { String(format: "%.0f%%", $0) } ?? "—")")
+    }
+    exit(0)
+}
+
 if wantsStats {
     // 用法：TermHubSmoke --stats [直连host user keyPath] 或 --stats --proxy h:p --password x host user keyPath
     do {
@@ -199,6 +234,9 @@ if wantsStats {
             previous = result.sample
             let s = result.stats
             print("第\(round)次: CPU=\(s.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "—") 内存=\(s.memUsedBytes/1024/1024)MB/\(s.memTotalBytes/1024/1024)MB(\(Int(s.memPercent))%) 负载=\(s.loadAvg1) 磁盘=\(s.disks.count)个挂载 RX=\(s.netRxBytesPerSec.map { Int($0/1024) } ?? -1)KB/s uptime=\(s.uptimeText)")
+            for io in s.diskIO {
+                print("  💿 \(io.device): 读\(Int(io.readBytesPerSec/1024))KB/s 写\(Int(io.writeBytesPerSec/1024))KB/s IOPS r\(Int(io.readsPerSec))/w\(Int(io.writesPerSec)) 耗时\(io.awaitMs.map { String(format: "%.1f", $0) } ?? "—")ms util=\(io.utilPercent.map { String(format: "%.0f%%", $0) } ?? "—")")
+            }
             try await Task.sleep(nanoseconds: 2_000_000_000)
         }
         try? await client.close()

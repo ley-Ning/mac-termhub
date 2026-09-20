@@ -24,6 +24,19 @@ public struct ServerStats: Sendable, Equatable {
     public var swapTotalBytes: Int64 = 0
     public var swapUsedBytes: Int64 = 0
     public var disks: [DiskUsage] = []
+
+    /// 单块物理盘的 I/O 指标（iostat 口径，两次采样求差）
+    public struct DiskIO: Sendable, Equatable, Identifiable {
+        public var id: String { device }
+        public let device: String
+        public let readsPerSec: Double
+        public let writesPerSec: Double
+        public let readBytesPerSec: Double
+        public let writeBytesPerSec: Double
+        public let awaitMs: Double?       // 每次 I/O 平均耗时（读+写合计）
+        public let utilPercent: Double?   // 采样期内设备繁忙比例
+    }
+    public var diskIO: [DiskIO] = []
     public var netRxBytesPerSec: Double?    // 需要两次采样
     public var netTxBytesPerSec: Double?
     public var uptimeSeconds: Double = 0
@@ -52,14 +65,34 @@ public enum ServerStatsParser {
     echo '=MEM='; free -b 2>/dev/null | grep -E '^(Mem|Swap)'; \
     echo '=DISK='; df -P -B1 -x tmpfs -x devtmpfs 2>/dev/null | tail -n +2; \
     echo '=NET='; cat /proc/net/dev 2>/dev/null | tail -n +3; \
+    echo '=DISKIO='; cat /proc/diskstats 2>/dev/null; \
     echo '=UP='; cat /proc/uptime 2>/dev/null
     """
 
-    /// 上一次的原始计数（用于 CPU/网络增量）
+    /// 上一次的原始计数（用于 CPU/网络/磁盘增量）
+    public struct DiskCounters: Sendable {
+        let reads: UInt64
+        let sectorsRead: UInt64
+        let msReading: UInt64
+        let writes: UInt64
+        let sectorsWritten: UInt64
+        let msWriting: UInt64
+        let msDoingIO: UInt64
+    }
+
     public struct PreviousSample: Sendable {
         let cpuJiffies: [UInt64]
         let netBytes: (rx: UInt64, tx: UInt64)
+        let diskCounters: [String: DiskCounters]
         let at: Date
+    }
+
+    /// 整盘过滤：保留 sdX/vdX/xvdX/nvmeXnY/mmcblkX，排除分区、loop、ram、dm、md
+    static func isWholeDisk(_ name: String) -> Bool {
+        for prefix in ["loop", "ram", "dm-", "md", "sr", "fd"] where name.hasPrefix(prefix) { return false }
+        if name.hasPrefix("nvme") || name.hasPrefix("mmcblk") { return !name.contains("p") }
+        if let last = name.last, last.isNumber { return false }   // sda1 之类分区
+        return true
     }
 
     public static func parse(
@@ -156,12 +189,55 @@ public enum ServerStatsParser {
             stats.netTxBytesPerSec = Double(txTotal &- previous.netBytes.tx) / seconds
         }
 
+        // 磁盘 I/O（/proc/diskstats 增量：速率、IOPS、await、%util）
+        var diskCounters: [String: DiskCounters] = [:]
+        for line in sections["DISKIO"]?.split(separator: "\n") ?? [] {
+            let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            // major minor name rcm rm rs rms wcm wm ws wms iop msio wms
+            guard parts.count >= 14 else { continue }
+            let name = String(parts[2])
+            guard Self.isWholeDisk(name),
+                  let reads = UInt64(parts[3]), let sectorsRead = UInt64(parts[5]),
+                  let msReading = UInt64(parts[6]),
+                  let writes = UInt64(parts[7]), let sectorsWritten = UInt64(parts[9]),
+                  let msWriting = UInt64(parts[10]),
+                  let msDoingIO = UInt64(parts[12]) else { continue }
+            diskCounters[name] = DiskCounters(
+                reads: reads, sectorsRead: sectorsRead, msReading: msReading,
+                writes: writes, sectorsWritten: sectorsWritten,
+                msWriting: msWriting, msDoingIO: msDoingIO
+            )
+        }
+        if let previous {
+            let seconds = max(now.timeIntervalSince(previous.at), 0.5)
+            for (name, c) in diskCounters {
+                guard let prev = previous.diskCounters[name] else { continue }
+                let dReads = c.reads &- prev.reads
+                let dWrites = c.writes &- prev.writes
+                let dIOs = dReads + dWrites
+                var awaitMs: Double?
+                if dIOs > 0 {
+                    awaitMs = Double((c.msReading &- prev.msReading) + (c.msWriting &- prev.msWriting)) / Double(dIOs)
+                }
+                stats.diskIO.append(.init(
+                    device: name,
+                    readsPerSec: Double(dReads) / seconds,
+                    writesPerSec: Double(dWrites) / seconds,
+                    readBytesPerSec: Double((c.sectorsRead &- prev.sectorsRead)) * 512 / seconds,
+                    writeBytesPerSec: Double((c.sectorsWritten &- prev.sectorsWritten)) * 512 / seconds,
+                    awaitMs: awaitMs,
+                    utilPercent: min(Double(c.msDoingIO &- prev.msDoingIO) / (seconds * 1000) * 100, 100)
+                ))
+            }
+            stats.diskIO.sort { ($0.readBytesPerSec + $0.writeBytesPerSec) > ($1.readBytesPerSec + $1.writeBytesPerSec) }
+        }
+
         // uptime
         if let upLine = sections["UP"]?.split(separator: " ").first {
             stats.uptimeSeconds = Double(upLine) ?? 0
         }
 
-        return (stats, PreviousSample(cpuJiffies: cpuJiffies, netBytes: (rxTotal, txTotal), at: now))
+        return (stats, PreviousSample(cpuJiffies: cpuJiffies, netBytes: (rxTotal, txTotal), diskCounters: diskCounters, at: now))
     }
 }
 

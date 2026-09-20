@@ -19,6 +19,7 @@ public struct SystemStatsTabPage: View {
                 gaugeRow
                 networkCard
                 diskCard
+                diskIOCard
             }
             .padding(14)
             .frame(maxWidth: .infinity)
@@ -209,6 +210,73 @@ public struct SystemStatsTabPage: View {
                         .font(.caption).monospacedDigit()
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: true, vertical: false)
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    // MARK: - 磁盘 I/O（速率 / IOPS / 平均耗时 / 繁忙率）
+
+    private var diskIOCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("磁盘 I/O").font(.headline)
+                Spacer()
+                Text("await = 平均耗时 · util = 繁忙率")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            if stats.stats.diskIO.isEmpty {
+                Text(stats.isRunning ? "采样中…（速率与耗时需两次采样）" : "连接后自动采集 /proc/diskstats")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(stats.stats.diskIO) { io in
+                HStack(alignment: .top, spacing: 10) {
+                    Text(io.device)
+                        .font(.system(size: 12, design: .monospaced))
+                        .lineLimit(1)
+                        .frame(minWidth: 44, maxWidth: 90, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 10) {
+                            Label(formatRate(io.readBytesPerSec), systemImage: "arrow.down")
+                                .foregroundStyle(.blue)
+                            Label(formatRate(io.writeBytesPerSec), systemImage: "arrow.up")
+                                .foregroundStyle(.orange)
+                        }
+                        .font(.caption).monospacedDigit()
+                        HStack(spacing: 10) {
+                            Text("IOPS 读 \(String(format: "%.0f", io.readsPerSec)) · 写 \(String(format: "%.0f", io.writesPerSec))")
+                            if let awaitMs = io.awaitMs {
+                                Text("耗时 \(String(format: "%.1f", awaitMs)) ms")
+                            } else {
+                                Text("耗时 —")
+                            }
+                        }
+                        .font(.caption2)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text(String(format: "%.0f%%", io.utilPercent ?? 0))
+                            .font(.caption2)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(.quaternary)
+                                Capsule()
+                                    .fill((io.utilPercent ?? 0) > 80 ? Color.red : (io.utilPercent ?? 0) > 50 ? Color.orange : Color.accentColor)
+                                    .frame(width: geo.size.width * min((io.utilPercent ?? 0) / 100, 1))
+                            }
+                        }
+                        .frame(width: 64, height: 6)
+                    }
                 }
                 .padding(.vertical, 2)
             }
