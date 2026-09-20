@@ -22,6 +22,7 @@ public struct FilesTabPage: View {
     @State private var showLocalNewFolder = false
     @State private var localNewFolderName = ""
     @State private var localRefresh = 0
+    @State private var selection: String?
 
     public init(hostSession: HostSession) {
         self.hostSession = hostSession
@@ -46,6 +47,7 @@ public struct FilesTabPage: View {
                 Task { await sftp.ensureOpen() }
             }
         }
+        .background(quickKeys)
         .onChange(of: hostSession.ssh.phase) { _, phase in
             if phase.isAlive, sftp.phase == .idle {
                 Task { await sftp.ensureOpen() }
@@ -125,49 +127,118 @@ public struct FilesTabPage: View {
         }
     }
 
+    /// 键盘快捷操作（隐藏按钮承载，作用于当前选中项）
+    @ViewBuilder
+    private var quickKeys: some View {
+        Group {
+            Button("删除") { if let sel = selectedEntry { deleteTarget = sel } }
+                .keyboardShortcut(.delete, modifiers: [])
+            Button("重命名") {
+                if let sel = selectedEntry {
+                    renameText = sel.name
+                    renameTarget = sel
+                }
+            }
+            .keyboardShortcut(.return, modifiers: [])
+            Button("预览") { if let sel = selectedEntry { previewEntry = sel } }
+                .keyboardShortcut("o", modifiers: .command)
+            Button("复制") { copyCurrent() }
+                .keyboardShortcut("c", modifiers: .command)
+            Button("剪切") { cutCurrent() }
+                .keyboardShortcut("x", modifiers: .command)
+            Button("粘贴") { pasteClipboard() }
+                .keyboardShortcut("v", modifiers: .command)
+            Button("刷新") { Task { await sftp.list() } }
+                .keyboardShortcut("r", modifiers: .command)
+            Button("上一级") { Task { await sftp.goUp() } }
+                .keyboardShortcut(.upArrow, modifiers: .command)
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0.001)
+        .allowsHitTesting(false)
+    }
+
     // MARK: - 远程工具条
 
     private var remoteToolbar: some View {
-        HStack(spacing: 8) {
-            Button {
-                Task { await sftp.goUp() }
-            } label: {
-                Image(systemName: "arrow.up")
-            }
-            .help("上一级")
+        HStack(spacing: 4) {
+            Button { Task { await sftp.goUp() } } label: { Image(systemName: "arrow.up") }
+                .help("上一级 (⌘↑)")
 
             Text(sftp.currentPath)
-                .font(.system(size: 12, design: .monospaced))
+                .font(.system(size: 11, design: .monospaced))
                 .lineLimit(1)
                 .truncationMode(.head)
                 .help(sftp.currentPath)
-                .frame(maxWidth: 260, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if sftp.isListing {
                 ProgressView().controlSize(.small)
             }
-            Spacer()
 
-            Button {
-                newFolderName = ""
-                showNewFolder = true
-            } label: {
-                Label("新建目录", systemImage: "folder.badge.plus")
+            Divider().frame(height: 14)
+
+            Button { newFolderName = ""; showNewFolder = true } label: { Image(systemName: "folder.badge.plus") }
+                .help("新建目录")
+            Button { newFileName = ""; showNewFile = true } label: { Image(systemName: "doc.badge.plus") }
+                .help("新建文件")
+            if let sel = selectedEntry, !sel.isDirectory {
+                Button { previewEntry = sel } label: { Image(systemName: "eye") }
+                    .help("预览/编辑 (⌘O)")
+                Button { download(sel) } label: { Image(systemName: "square.and.arrow.down") }
+                    .help("下载到本地…")
             }
-            Button {
-                uploadFiles()
-            } label: {
-                Label("上传", systemImage: "square.and.arrow.up")
+            if selectedEntry != nil {
+                Button { copyCurrent() } label: { Image(systemName: "doc.on.doc") }
+                    .help("复制 (⌘C)")
+                Button { cutCurrent() } label: { Image(systemName: "scissors") }
+                    .help("剪切 (⌘X)")
+                Button {
+                    renameText = selectedEntry?.name ?? ""
+                    renameTarget = selectedEntry
+                } label: { Image(systemName: "pencil") }
+                    .help("重命名 (⏎)")
+                Button { deleteTarget = selectedEntry } label: { Image(systemName: "trash") }
+                    .help("删除 (⌫)")
+                    .foregroundStyle(.red)
             }
-            Button {
-                Task { await sftp.list() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
+            if clipboard != nil {
+                Button { pasteClipboard() } label: { Image(systemName: "doc.on.clipboard") }
+                    .help("粘贴到当前目录 (⌘V)")
             }
-            .help("刷新")
+            Button { uploadFiles() } label: { Image(systemName: "square.and.arrow.up") }
+                .help("上传文件")
+            Button { Task { await sftp.list() } } label: { Image(systemName: "arrow.clockwise") }
+                .help("刷新 (⌘R)")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .buttonStyle(.borderless)
+    }
+
+    private var selectedEntry: SFTPEntry? {
+        guard let selection else { return nil }
+        return sftp.entries.first { $0.id == selection }
+    }
+
+    private func copyCurrent() {
+        if let sel = selectedEntry { clipboard = ([sel], cut: false) }
+    }
+
+    private func cutCurrent() {
+        if let sel = selectedEntry { clipboard = ([sel], cut: true) }
+    }
+
+    private func pasteClipboard() {
+        guard let clip = clipboard else { return }
+        Task {
+            if clip.cut {
+                await sftp.moveEntries(clip.entries, toDirectory: sftp.currentPath)
+            } else {
+                await sftp.copyEntries(clip.entries, toDirectory: sftp.currentPath)
+            }
+            clipboard = nil
+        }
     }
 
     // MARK: - 远程列表
@@ -196,7 +267,7 @@ public struct FilesTabPage: View {
     }
 
     private var remoteTable: some View {
-        Table(sftp.entries) {
+        Table(sftp.entries, selection: $selection) {
             TableColumn("名称") { entry in
                 HStack(spacing: 6) {
                     Image(systemName: entry.isDirectory ? "folder.fill" : "doc")
