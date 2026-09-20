@@ -80,6 +80,7 @@ if let importIndex = args.firstIndex(of: "--import"), importIndex + 1 < args.cou
         var notes: String?
         var proxyHost: String?
         var proxyPort: Int?
+        var force: Bool?
     }
     do {
         let data = try Data(contentsOf: URL(fileURLWithPath: args[args.index(after: importIndex)]))
@@ -90,13 +91,17 @@ if let importIndex = args.firstIndex(of: "--import"), importIndex + 1 < args.cou
         var imported = 0, skipped = 0
         for item in list {
             // 同别名 或 同 主机+端口+用户 视为重复
-            if existing.contains(where: { $0.alias == item.alias })
-                || existing.contains(where: {
-                    $0.hostname == item.hostname && $0.port == item.port && $0.username == item.username
-                }) {
-                print("↩️ 跳过 \(item.alias)（已存在同别名或同 主机+用户）")
+            let dupAlias = existing.contains { $0.alias == item.alias }
+            let dupHost = existing.contains {
+                $0.hostname == item.hostname && $0.port == item.port && $0.username == item.username
+            }
+            if (dupAlias || dupHost) && item.force != true {
+                print("↩️ 跳过 \(item.alias)（已存在同别名或同 主机+用户；force=true 可强制）")
                 skipped += 1
                 continue
+            }
+            if dupAlias {
+                print("⚠️ 存在同别名 \(item.alias)，仍按 force 导入")
             }
             let host = SSHHost(
                 alias: item.alias,
