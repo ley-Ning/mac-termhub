@@ -356,20 +356,25 @@ public struct FilesTabPage: View {
         .background(.bar)
     }
 
-    /// 远程文件列表：List 自绘行（Table 的 contextMenu/primaryAction 在 macOS 26
-    /// 上不可靠——双击右键全部失灵，List 的手势与 contextMenu 稳定）
+    /// 远程文件列表：ScrollView+LazyVStack 自绘行（macOS 26 上 List 嵌在
+    /// HSplitView/VStack 里高度塌陷只显几行；Table 的双击/右键又不可靠——两者都不能用）
     private var remoteTable: some View {
         VStack(spacing: 0) {
             remoteHeader
             Divider()
-            List(selection: $selection) {
-                ForEach(sftp.entries) { entry in
-                    remoteRow(entry)
-                        .tag(entry.id)
-                        .contextMenu { entryMenu(entry) }
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(sftp.entries) { entry in
+                        remoteRow(entry)
+                            .background(
+                                selection == entry.id
+                                    ? Color.accentColor.opacity(0.15)
+                                    : Color.clear
+                            )
+                            .contextMenu { entryMenu(entry) }
+                    }
                 }
             }
-            .listStyle(.plain)
         }
     }
 
@@ -408,15 +413,18 @@ public struct FilesTabPage: View {
                 .frame(width: 76, alignment: .leading)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 3)
+        .padding(.vertical, 4)
         .contentShape(Rectangle())
-        // 双击整行 = 目录进入 / 文件预览（单击仍归 List 选中）
+        // 单击选中；双击 = 目录进入 / 文件预览
         .onTapGesture(count: 2) {
             if entry.isDirectory {
                 Task { await sftp.list(path: entry.path) }
             } else {
                 previewEntry = entry
             }
+        }
+        .onTapGesture(count: 1) {
+            selection = entry.id
         }
     }
 
@@ -508,46 +516,56 @@ public struct FilesTabPage: View {
 
             Divider()
 
-            List(localEntries, id: \.self) { entryURL in
-                let isDir = (try? entryURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                HStack(spacing: 6) {
-                    Image(systemName: isDir ? "folder" : "doc")
-                        .foregroundStyle(isDir ? Color.accentColor : .secondary)
-                    Text(entryURL.lastPathComponent).font(.caption)
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-                .onTapGesture(count: isDir ? 1 : 2) {
-                    if isDir {
-                        // 目录单击即进（导航高频动作不该要双击）
-                        localPath = entryURL
-                    } else {
-                        // 双击本地文件 = 上传到远端当前目录
-                        Task { await sftp.upload(entryURL) }
+            // ScrollView+LazyVStack：List 在 macOS 26 的 HSplitView 里高度塌陷只显几行
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(localEntries, id: \.self) { entryURL in
+                        localRow(entryURL)
                     }
-                }
-                .contextMenu {
-                    if isDir {
-                        Button("进入") { localPath = entryURL }
-                    } else {
-                        Button("上传到远端") { Task { await sftp.upload(entryURL) } }
-                        Divider()
-                        Button("用默认应用打开") { NSWorkspace.shared.open(entryURL) }
-                    }
-                    Button("在 Finder 中显示") {
-                        NSWorkspace.shared.activateFileViewerSelecting([entryURL])
-                    }
-                    Divider()
-                    Button("重命名…") {
-                        localRenameText = entryURL.lastPathComponent
-                        localRenameURL = entryURL
-                    }
-                    Button("移到废纸篓", role: .destructive) { trashLocal(entryURL) }
                 }
             }
-            .listStyle(.plain)
         }
         .background(.bar.opacity(0.3))
+    }
+
+    private func localRow(_ entryURL: URL) -> some View {
+        let isDir = (try? entryURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+        return HStack(spacing: 6) {
+            Image(systemName: isDir ? "folder" : "doc")
+                .foregroundStyle(isDir ? Color.accentColor : .secondary)
+            Text(entryURL.lastPathComponent).font(.caption)
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture(count: isDir ? 1 : 2) {
+            if isDir {
+                // 目录单击即进（导航高频动作不该要双击）
+                localPath = entryURL
+            } else {
+                // 双击本地文件 = 上传到远端当前目录
+                Task { await sftp.upload(entryURL) }
+            }
+        }
+        .contextMenu {
+            if isDir {
+                Button("进入") { localPath = entryURL }
+            } else {
+                Button("上传到远端") { Task { await sftp.upload(entryURL) } }
+                Divider()
+                Button("用默认应用打开") { NSWorkspace.shared.open(entryURL) }
+            }
+            Button("在 Finder 中显示") {
+                NSWorkspace.shared.activateFileViewerSelecting([entryURL])
+            }
+            Divider()
+            Button("重命名…") {
+                localRenameText = entryURL.lastPathComponent
+                localRenameURL = entryURL
+            }
+            Button("移到废纸篓", role: .destructive) { trashLocal(entryURL) }
+        }
     }
 
     private var localEntries: [URL] {

@@ -213,6 +213,45 @@ if args.contains("--security-audit") {
     }
 }
 
+// --sftp-list <host> <path> [user] [keyPath]：列目录条数+样本（诊断"文件不全"）
+if let i = args.firstIndex(of: "--sftp-list"), i + 2 < args.count {
+    let target = args[i + 1]
+    let dirPath = args[i + 2]
+    let user2 = i + 3 < args.count ? args[i + 3] : "root"
+    let key2 = i + 4 < args.count ? args[i + 4] : NSString(string: "~/.ssh/id_ed25519").expandingTildeInPath
+    do {
+        let conn = try await SSHConnectionFactory.connect(
+            to: HostSnapshot(
+                id: UUID(), alias: "sftplist", hostname: target, port: 22, username: user2,
+                authMethod: passwordOverride != nil ? .password : .key,
+                keyPath: passwordOverride != nil ? nil : key2,
+                groupName: "s", notes: ""
+            ),
+            hostKeyCallback: { facts in
+                SharedKnownHosts.store.trust(host: facts.host, port: facts.port,
+                                             fingerprintSHA256: facts.fingerprint, keyType: facts.keyType)
+                return true
+            },
+            overridePassword: passwordOverride
+        )
+        let sftp = try await conn.client.openSFTP()
+        let names = try await sftp.listDirectory(atPath: dirPath)
+        var total = 0
+        for batch in names { total += batch.components.count }
+        print("条目总数(含 ./..): \(total)")
+        for batch in names.prefix(3) {
+            for c in batch.components.prefix(10) {
+                print("  \(c.longname)")
+            }
+        }
+        try? await conn.client.close()
+        exit(0)
+    } catch {
+        print("❌ \(error.localizedDescription)")
+        exit(1)
+    }
+}
+
 if args.contains("--seed") {
     do {
         let container = try AppStorage.makeSharedContainer()
