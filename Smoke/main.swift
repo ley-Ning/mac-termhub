@@ -33,7 +33,7 @@ LoggingSystem.bootstrap { label in
 
 let rawArgs = Array(CommandLine.arguments.dropFirst())
 let wantsStats = rawArgs.contains("--stats")
-let args = rawArgs.filter { $0 != "-v" && $0 != "--verbose" && $0 != "--stats" }
+let args = rawArgs.filter { $0 != "-v" && $0 != "--verbose" && $0 != "--stats" && $0 != "--password-stdin" }
 
 // --seed：把 root@163（密钥认证，不涉及任何 Keychain 凭据）写入共享库
 if args.contains("--seed-cc26039") {
