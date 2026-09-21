@@ -73,8 +73,8 @@ public enum ServerStatsParser {
     echo '=DISKIO='; cat /proc/diskstats 2>/dev/null
     """
 
-    /// 全量采集（兼容旧调用/首次采样）
-    public static let command = lightCommand + " " + heavyCommand
+    /// 全量采集（兼容旧调用/首次采样）——拼接必须带分号：light 结尾无分号，直接空格拼接会把 echo 当成上一条命令的参数
+    public static let command = lightCommand + "; " + heavyCommand
 
     /// 上一次的原始计数（用于 CPU/网络/磁盘增量）
     public struct DiskCounters: Sendable {
