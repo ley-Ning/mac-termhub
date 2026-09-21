@@ -33,7 +33,13 @@ LoggingSystem.bootstrap { label in
 
 let rawArgs = Array(CommandLine.arguments.dropFirst())
 let wantsStats = rawArgs.contains("--stats")
-let args = rawArgs.filter { $0 != "-v" && $0 != "--verbose" && $0 != "--stats" && $0 != "--password-stdin" }
+// 位置参数 = 去掉所有标志与"标志+值"对（--proxy h:p / --jump alias / --password x）
+var args = rawArgs.filter { $0 != "-v" && $0 != "--verbose" && $0 != "--stats" && $0 != "--password-stdin" }
+for flag in ["--proxy", "--jump", "--password"] {
+    if let i = args.firstIndex(of: flag), i + 1 < args.count {
+        args.removeSubrange(i...i + 1)
+    }
+}
 
 // --seed：把 root@163（密钥认证，不涉及任何 Keychain 凭据）写入共享库
 if args.contains("--seed-cc26039") {
@@ -240,7 +246,7 @@ let host = args.count > 0 ? args[0] : "192.168.2.163"
 let user = args.count > 1 ? args[1] : "mw"
 let keyPath = args.count > 2 ? args[2] : NSString(string: "~/.ssh/id_ed25519").expandingTildeInPath
 // --password-stdin：从标准输入读密码（管道传递，不进 shell history / ps 进程列表）
-if let i = args.firstIndex(of: "--password"), i + 1 < args.count {
+if let i = rawArgs.firstIndex(of: "--password"), i + 1 < rawArgs.count {
     print("❌ --password <明文> 已禁用（命令行参数会留在 shell history 与 ps 输出里）。")
     print("   请改用：echo '密码' | TermHubSmoke … --password-stdin")
     exit(2)
@@ -252,8 +258,8 @@ let passwordOverride: String? = {
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
 }()
-// --proxy host:port 走 HTTP 代理连接
-let proxyIndex = args.firstIndex(of: "--proxy")
+// --proxy host:port 走 HTTP 代理连接（标志对已从位置参数摘除，从 rawArgs 取值）
+let proxyIndex = rawArgs.firstIndex(of: "--proxy")
 let proxyParts: (host: String, port: Int)? = {
     guard let i = proxyIndex, i + 1 < args.count else { return nil }
     let value = args[args.index(after: i)]
@@ -298,9 +304,26 @@ if args.contains("--stats-fixture") {
 }
 
 if wantsStats {
-    // 用法：TermHubSmoke --stats [直连host user keyPath] 或 --stats --proxy h:p --password x host user keyPath
+    // 用法：TermHubSmoke --stats [直连host user keyPath]
+    //       --stats --proxy h:p --password-stdin（stdin 传密码） host user keyPath
+    //       --stats --jump <已存库别名> ...（经库中该主机跳板转发，实机验证跳板链）
     do {
         print("== 资源采样解析验证 ==")
+        // --jump <alias>：从共享库解析跳板链（沿 jumpHostID 逐级取，防环）
+        var jumpSnapshots: [HostSnapshot] = []
+        if let jumpIndex = rawArgs.firstIndex(of: "--jump"), jumpIndex + 1 < rawArgs.count {
+            let jumpAlias = rawArgs[rawArgs.index(after: jumpIndex)]
+            let container = try AppStorage.makeSharedContainer()
+            let context = ModelContext(container)
+            let all = try context.fetch(FetchDescriptor<SSHHost>())
+            var visited: Set<UUID> = []
+            var cursor = all.first { $0.alias == jumpAlias }
+            while let hop = cursor, visited.insert(hop.id).inserted {
+                jumpSnapshots.append(hop.snapshot)
+                cursor = all.first { $0.id == hop.jumpHostID }
+            }
+            print("跳板链: \(jumpSnapshots.map(\.alias).joined(separator: " -> "))(-> 目标)")
+        }
         let client = try await SSHConnectionFactory.connect(
             to: HostSnapshot(
                 id: UUID(), alias: "stats", hostname: host, port: 22, username: user,
@@ -315,6 +338,7 @@ if wantsStats {
                                              fingerprintSHA256: facts.fingerprint, keyType: facts.keyType)
                 return true
             },
+            jumpHosts: jumpSnapshots,
             overridePassword: passwordOverride
         ).client
         var previous: ServerStatsParser.PreviousSample?

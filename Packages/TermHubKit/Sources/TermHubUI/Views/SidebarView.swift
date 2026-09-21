@@ -11,6 +11,8 @@ public struct SidebarView: View {
 
     public init() {}
 
+    @StateObject private var latencyMonitor = LatencyMonitor()
+
     @State private var searchText = ""
     @State private var editingHost: SSHHost?
     @State private var showingNewHost = false
@@ -55,7 +57,7 @@ public struct SidebarView: View {
                     // 搜索时无视折叠，保证结果可见
                     if !isCollapsed(group.name) {
                         ForEach(group.hosts) { host in
-                            SidebarRow(host: host, session: appState.sessions[host.id])
+                            SidebarRow(host: host, session: appState.sessions[host.id], latency: latencyMonitor.results[host.id])
                                 .tag(host.id)
                                 .contextMenu {
                                     Button("编辑…") { editingHost = host }
@@ -117,6 +119,14 @@ public struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // 资产延迟监测：进入即测一轮，主机目录变化补测，60s 周期刷新
+        .task {
+            latencyMonitor.start()
+            latencyMonitor.updateHosts(hosts.map(\.snapshot))
+        }
+        .onChange(of: hosts.map(\.id)) { _, _ in
+            latencyMonitor.updateHosts(hosts.map(\.snapshot))
+        }
         // 空白区域右键：与工具栏一致的操作（右键在主机行上时仍显示该行的菜单）
         .contextMenu {
             Button {
@@ -251,13 +261,14 @@ public struct SidebarView: View {
 private struct SidebarRow: View {
     let host: SSHHost
     let session: HostSession?
+    let latency: LatencyMonitor.Probe?
 
     public var body: some View {
         if let session {
             // 有会话：观察 HostSession，phase 变化经转发触发状态点刷新
-            SidebarLiveRow(host: host, session: session)
+            SidebarLiveRow(host: host, session: session, latency: latency)
         } else {
-            SidebarIdleRow(host: host)
+            SidebarIdleRow(host: host, latency: latency)
         }
     }
 }
@@ -265,27 +276,30 @@ private struct SidebarRow: View {
 private struct SidebarLiveRow: View {
     let host: SSHHost
     @ObservedObject var session: HostSession
+    let latency: LatencyMonitor.Probe?
 
     public var body: some View {
-        row(host: host, phase: session.ssh.phase)
+        row(host: host, phase: session.ssh.phase, latency: latency)
     }
 }
 
 private struct SidebarIdleRow: View {
     let host: SSHHost
+    let latency: LatencyMonitor.Probe?
 
     public var body: some View {
-        row(host: host, phase: nil)
+        row(host: host, phase: nil, latency: latency)
     }
 }
 
-private func row(host: SSHHost, phase: SSHSession.Phase?) -> some View {
-    SidebarRowShell(host: host, phase: phase)
+private func row(host: SSHHost, phase: SSHSession.Phase?, latency: LatencyMonitor.Probe?) -> some View {
+    SidebarRowShell(host: host, phase: phase, latency: latency)
 }
 
 private struct SidebarRowShell: View {
     let host: SSHHost
     let phase: SSHSession.Phase?
+    let latency: LatencyMonitor.Probe?
 
     public var body: some View {
         HStack(spacing: 8) {
@@ -314,6 +328,17 @@ private struct SidebarRowShell: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            // 资产延迟（借鉴 HexHub）：TCP RTT，周期刷新
+            if let latency {
+                Text(latency.text)
+                    .font(.system(size: 10, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(latencyColor(latency))
+                    .frame(minWidth: 38, alignment: .trailing)
+                    .help(latency == .timeout
+                          ? "探测超时（主机或代理不可达）"
+                          : "TCP 连接往返延迟（约 60 秒刷新一次；代理主机测代理入口）")
+            }
             // 密码认证但未存密码（迁移导入）：给出待补密码标记
             if host.authMethod == .password,
                KeychainStore.read(kind: .password, hostID: host.id) == nil {
@@ -324,5 +349,14 @@ private struct SidebarRowShell: View {
             }
         }
         .padding(.vertical, 1)
+    }
+
+    private func latencyColor(_ probe: LatencyMonitor.Probe) -> Color {
+        switch probe {
+        case .ms(let value) where value < 80: return .green
+        case .ms(let value) where value < 200: return .yellow
+        case .ms: return .orange
+        case .timeout: return .red
+        }
     }
 }
