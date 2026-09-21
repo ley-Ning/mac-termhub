@@ -58,16 +58,23 @@ public struct ServerStats: Sendable, Equatable {
 
 /// 采样命令与解析（一次 exec 拿全部原始数据，本地解析）
 public enum ServerStatsParser {
-    /// 远端执行的采集命令（标记分段，一条 exec 全拿回来）
-    public static let command = """
+    /// 轻量采集（每秒）：CPU/内存/负载/网络/uptime——都是 /proc 单文件读取，远端开销极小
+    public static let lightCommand = """
     echo '=LOAD='; cat /proc/loadavg 2>/dev/null; \
     echo '=CPU='; grep '^cpu ' /proc/stat 2>/dev/null; \
     echo '=MEM='; free -b 2>/dev/null | grep -E '^(Mem|Swap)'; \
-    echo '=DISK='; df -P -B1 -x tmpfs -x devtmpfs 2>/dev/null | tail -n +2; \
     echo '=NET='; cat /proc/net/dev 2>/dev/null | tail -n +3; \
-    echo '=DISKIO='; cat /proc/diskstats 2>/dev/null; \
     echo '=UP='; cat /proc/uptime 2>/dev/null
     """
+
+    /// 重量采集（低频轮换）：磁盘占用 df + 磁盘 I/O 计数——df 要扫挂载表，不能每秒跑
+    public static let heavyCommand = """
+    echo '=DISK='; df -P -B1 -x tmpfs -x devtmpfs 2>/dev/null | tail -n +2; \
+    echo '=DISKIO='; cat /proc/diskstats 2>/dev/null
+    """
+
+    /// 全量采集（兼容旧调用/首次采样）
+    public static let command = lightCommand + " " + heavyCommand
 
     /// 上一次的原始计数（用于 CPU/网络/磁盘增量）
     public struct DiskCounters: Sendable {
@@ -287,10 +294,23 @@ public final class ServerStatsService: ObservableObject {
         isRunning = false
     }
 
+    /// 重量采集轮换计数：每 5 个周期跑一次 df/diskstats（重），其余周期只跑轻命令
+    private var heavyTick = 0
+
     public func sampleOnce() async {
         do {
-            let output = try await ssh.exec(ServerStatsParser.command)
-            let result = ServerStatsParser.parse(output: output, previous: previous)
+            heavyTick += 1
+            let useHeavy = previous == nil || heavyTick % 5 == 0
+            let command = useHeavy
+                ? ServerStatsParser.command
+                : ServerStatsParser.lightCommand
+            let output = try await ssh.exec(command)
+            var result = ServerStatsParser.parse(output: output, previous: previous)
+            // 轻轮没有 DISK/DISKIO 分节：沿用上轮的磁盘占用与 I/O（不闪空）
+            if !useHeavy {
+                if result.stats.disks.isEmpty { result.stats.disks = stats.disks }
+                if result.stats.diskIO.isEmpty { result.stats.diskIO = stats.diskIO }
+            }
             previous = result.sample
             stats = result.stats
             lastError = nil
