@@ -1,13 +1,23 @@
 import SwiftUI
+import SwiftData
 import TermHubCore
 
 /// 详情区：终端主工作区 + 右侧可开关工具面板（容器/文件/资源）
 public struct HostDetailView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.modelContext) private var modelContext
     @ObservedObject var session: HostSession
+
+    @State private var editingHost: TermHubCore.SSHHost?
 
     public init(session: HostSession) {
         self.session = session
+    }
+
+    /// 密码认证但钥匙串里没有密码（如从 HexHub 迁移、密码无法导出的主机）
+    private var needsPassword: Bool {
+        session.ssh.host.authMethod == .password
+            && KeychainStore.read(kind: .password, hostID: session.ssh.host.id) == nil
     }
 
     public var body: some View {
@@ -28,6 +38,9 @@ public struct HostDetailView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .sheet(item: $editingHost) { host in
+            HostEditView(host: host)
         }
     }
 
@@ -58,6 +71,21 @@ public struct HostDetailView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .help(message)
+            }
+            // 缺密码引导：密码认证且钥匙串无密码 —— 一键打开编辑表单补填（只进钥匙串）
+            if needsPassword, session.ssh.phase != .connected {
+                Button {
+                    let hostID = session.ssh.host.id
+                    editingHost = try? modelContext.fetch(
+                        FetchDescriptor<TermHubCore.SSHHost>(predicate: #Predicate { $0.id == hostID })
+                    ).first
+                } label: {
+                    Label("设置密码后连接", systemImage: "key.slash")
+                        .font(.caption)
+                }
+                .controlSize(.small)
+                .tint(.orange)
+                .help("该主机是密码认证但尚未保存密码（迁移导入的主机密码无法自动带来）。点击填写，保存后自动进钥匙串。")
             }
             // 自动重连状态徽章
             if let attempt = session.ssh.autoReconnectAttempt {

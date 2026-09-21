@@ -314,6 +314,14 @@ private struct SidebarRowShell: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            // 密码认证但未存密码（迁移导入）：给出待补密码标记
+            if host.authMethod == .password,
+               KeychainStore.read(kind: .password, hostID: host.id) == nil {
+                Image(systemName: "key.slash")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .help("尚未保存密码（迁移导入），选中后点「设置密码后连接」补填")
+            }
         }
         .padding(.vertical, 1)
     }
