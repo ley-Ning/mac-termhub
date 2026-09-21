@@ -32,7 +32,7 @@ cp App/Resources/Icon.icns "${APP_DIR}/Contents/Resources/Icon.icns"
 # 稳定签名身份：自签名 "TermHub Dev"（导入登录钥匙串后长期不变）。
 # ad-hoc 签名每次编译都变，macOS 钥匙串 ACL 跟着签名走，会导致每次读密码都弹系统密码框；
 # 稳定身份下"始终允许"一次即永久生效。
-IDENTITY="$(security find-identity 2>/dev/null | grep -o 'TermHub Dev' | head -1)"
+IDENTITY="$(security find-identity 2>/dev/null | grep -o 'TermHub Dev' | head -1 || true)"
 sign_with_identity() {
   codesign --force --sign "$IDENTITY" "$1" 2>/dev/null
 }
