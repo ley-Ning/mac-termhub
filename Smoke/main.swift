@@ -35,7 +35,7 @@ let rawArgs = Array(CommandLine.arguments.dropFirst())
 let wantsStats = rawArgs.contains("--stats")
 // 位置参数 = 去掉所有标志与"标志+值"对（--proxy h:p / --jump alias / --password x）
 var args = rawArgs.filter { $0 != "-v" && $0 != "--verbose" && $0 != "--stats" && $0 != "--password-stdin" }
-for flag in ["--proxy", "--jump", "--password"] {
+for flag in ["--proxy", "--jump", "--password", "--connect-only"] {
     if let i = args.firstIndex(of: flag), i + 1 < args.count {
         args.removeSubrange(i...i + 1)
     }
@@ -214,6 +214,36 @@ if args.contains("--security-audit") {
 }
 
 // --sftp-list <host> <path> [user] [keyPath]：列目录条数+样本（诊断"文件不全"）
+// --connect-only <host> [user] [keyPath]：纯连接计时（握手+认证，不做任何采样）
+if let i = rawArgs.firstIndex(of: "--connect-only"), i + 1 < rawArgs.count {
+    let target = rawArgs[rawArgs.index(after: i)]
+    let user2 = i + 2 < rawArgs.count ? rawArgs[rawArgs.index(after: rawArgs.index(after: i))] : "root"
+    let key2 = i + 3 < rawArgs.count ? rawArgs[i + 3] : NSString(string: "~/.ssh/id_ed25519").expandingTildeInPath
+    let t0 = Date()
+    do {
+        let conn = try await SSHConnectionFactory.connect(
+            to: HostSnapshot(
+                id: UUID(), alias: "timing", hostname: target, port: 22, username: user2,
+                authMethod: passwordOverride != nil ? .password : .key,
+                keyPath: passwordOverride != nil ? nil : key2,
+                groupName: "s", notes: ""
+            ),
+            hostKeyCallback: { facts in
+                SharedKnownHosts.store.trust(host: facts.host, port: facts.port,
+                                             fingerprintSHA256: facts.fingerprint, keyType: facts.keyType)
+                return true
+            },
+            overridePassword: passwordOverride
+        )
+        try? await conn.client.close()
+        print(String(format: "CONNECT %.2fs %@ success", Date().timeIntervalSince(t0), target))
+        exit(0)
+    } catch {
+        print(String(format: "CONNECT %.2fs %@ failed: %@", Date().timeIntervalSince(t0), target, error.localizedDescription))
+        exit(1)
+    }
+}
+
 if let i = args.firstIndex(of: "--sftp-list"), i + 2 < args.count {
     let target = args[i + 1]
     let dirPath = args[i + 2]

@@ -20,6 +20,23 @@ public struct StatusDot: View {
         Circle()
             .fill(color)
             .frame(width: 8, height: 8)
+            // 连接中呼吸闪烁：一眼看出"正在动"
+            .modifier(StatusDotPulse(active: phase == .connecting))
+    }
+}
+
+private struct StatusDotPulse: ViewModifier {
+    let active: Bool
+    @State private var pulsing = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(active ? (pulsing ? 0.25 : 1.0) : 1.0)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                    pulsing = true
+                }
+            }
     }
 }
 

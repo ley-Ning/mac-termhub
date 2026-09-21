@@ -55,6 +55,8 @@ public final class SSHSession: ObservableObject {
     @Published private(set) public var autoReconnectAttempt: Int?
     /// 本次连接由自动重连恢复（终端是新 shell，UI 需提示）
     @Published private(set) public var didAutoReconnect = false
+    /// 连接发起时刻（loading 动画计时用；连接结束置 nil）
+    @Published private(set) public var connectingSince: Date?
 
     private var client: SSHClient?
     /// 跳板链上的中间连接（顺序：第一跳在前）
@@ -92,6 +94,7 @@ public final class SSHSession: ObservableObject {
         didAutoReconnect = false
         lastJumpHosts = jumpHosts
         storedHostKeyCallback = hostKeyCallback
+        connectingSince = Date()
         phase = .connecting
 
         connectTask = Task { [weak self] in
@@ -124,6 +127,7 @@ public final class SSHSession: ObservableObject {
         } catch {
             let message = error.localizedDescription
             if !Task.isCancelled {
+                connectingSince = nil
                 phase = .failed(message: message)
             }
             switch error {
@@ -137,6 +141,7 @@ public final class SSHSession: ObservableObject {
 
     /// 连接就绪：记录 client、挂断线回调、启动心跳
     private func install(_ connection: SSHConnection) {
+        connectingSince = nil
         client = connection.client
         jumpClients = connection.jumpClients
         let client = connection.client
@@ -159,6 +164,7 @@ public final class SSHSession: ObservableObject {
         reconnectTask = nil
         autoReconnectAttempt = nil
         didAutoReconnect = false
+        connectingSince = nil
         teardownConnection()
         phase = .closed
     }
@@ -204,6 +210,7 @@ public final class SSHSession: ObservableObject {
     /// 重连路径的单次连接：重置用户断开标志（是意外掉线后的恢复）
     private func connectOnceForReconnect() async -> ConnectOutcome {
         isUserInitiatedClose = false
+        connectingSince = Date()
         phase = .connecting
         return await connectOnce()
     }

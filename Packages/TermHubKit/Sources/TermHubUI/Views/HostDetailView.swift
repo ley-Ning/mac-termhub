@@ -339,7 +339,7 @@ private struct TerminalContainer: View {
     private var overlay: some View {
         switch terminal.phase {
         case .waitingConnect:
-            placeholder(icon: "hourglass", text: "等待连接…")
+            connectingOverlay
         case .starting:
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
@@ -356,6 +356,28 @@ private struct TerminalContainer: View {
         case .running:
             EmptyView()
         }
+    }
+
+    /// 连接中 overlay：旋转指示 + 实时秒表（让用户看到"它在动"，可判断卡没卡）
+    private var connectingOverlay: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.large)
+            TimelineView(.periodic(from: .now, by: 0.1)) { context in
+                let elapsed = terminal.ssh.connectingSince.map {
+                    context.date.timeIntervalSince($0)
+                } ?? 0
+                Text("正在连接 \(terminal.ssh.host.displayAddress)…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text(String(format: "%.1f s", min(elapsed, 999)))
+                    .font(.system(size: 13, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .textBackgroundColor))
     }
 
     private func placeholder(icon: String, text: String, color: Color = .secondary) -> some View {
