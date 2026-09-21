@@ -23,6 +23,9 @@ public struct FilesTabPage: View {
     @State private var localNewFolderName = ""
     @State private var localRefresh = 0
     @State private var selection: String?
+    /// 路径手动输入模式
+    @State private var editingPath = false
+    @State private var pathDraft = ""
 
     public init(hostSession: HostSession) {
         self.hostSession = hostSession
@@ -176,11 +179,33 @@ public struct FilesTabPage: View {
             Button { Task { await sftp.goUp() } } label: { Image(systemName: "arrow.up") }
                 .help("上一级 (⌘↑)")
 
-            // 面包屑：点任意层级直达（一行路径文本没法点）
-            breadcrumb(sftp.currentPath) { path in
-                Task { await sftp.list(path: path) }
+            // 路径：面包屑（点层级直达）/ 铅笔进入手动输入模式（回车直达任意路径）
+            if editingPath {
+                TextField("输入远端路径后回车", text: $pathDraft, onCommit: commitPath)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11, design: .monospaced))
+                    .frame(maxWidth: .infinity)
+                Button {
+                    editingPath = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .foregroundStyle(.secondary)
+                .help("取消")
+            } else {
+                breadcrumb(sftp.currentPath) { path in
+                    Task { await sftp.list(path: path) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    pathDraft = sftp.currentPath
+                    editingPath = true
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                }
+                .foregroundStyle(.secondary)
+                .help("手动输入路径…")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
             if sftp.isListing {
                 ProgressView().controlSize(.small)
@@ -255,6 +280,17 @@ public struct FilesTabPage: View {
         .truncationMode(.tail)
     }
 
+    /// 手动路径提交：回车直达（~ 展开为家目录）
+    private func commitPath() {
+        var target = pathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        editingPath = false
+        guard !target.isEmpty else { return }
+        if target.hasPrefix("~") {
+            target = target.replacingCharacters(in: ...target.startIndex, with: NSHomeDirectory())
+        }
+        Task { await sftp.list(path: target) }
+    }
+
     private var selectedEntry: SFTPEntry? {
         guard let selection else { return nil }
         return sftp.entries.first { $0.id == selection }
@@ -305,49 +341,80 @@ public struct FilesTabPage: View {
         }
     }
 
+    /// 列表头（自绘，配合 List 行对齐）
+    private var remoteHeader: some View {
+        HStack(spacing: 8) {
+            Text("名称").frame(maxWidth: .infinity, alignment: .leading)
+            Text("大小").frame(width: 80, alignment: .trailing)
+            Text("修改时间").frame(width: 120, alignment: .leading)
+            Text("权限").frame(width: 76, alignment: .leading)
+        }
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(.bar)
+    }
+
+    /// 远程文件列表：List 自绘行（Table 的 contextMenu/primaryAction 在 macOS 26
+    /// 上不可靠——双击右键全部失灵，List 的手势与 contextMenu 稳定）
     private var remoteTable: some View {
-        Table(sftp.entries, selection: $selection) {
-            TableColumn("名称") { entry in
-                HStack(spacing: 6) {
-                    Image(systemName: entry.isDirectory ? "folder.fill" : "doc")
-                        .foregroundStyle(entry.isDirectory ? Color.accentColor : .secondary)
-                    Text(entry.name).font(.system(size: 12, weight: .medium))
+        VStack(spacing: 0) {
+            remoteHeader
+            Divider()
+            List(selection: $selection) {
+                ForEach(sftp.entries) { entry in
+                    remoteRow(entry)
+                        .tag(entry.id)
+                        .contextMenu { entryMenu(entry) }
                 }
             }
+            .listStyle(.plain)
+        }
+    }
 
-            TableColumn("大小") { entry in
-                Text(entry.formattedSize)
-                    .font(.caption).monospacedDigit()
-                    .foregroundStyle(.secondary)
+    private func remoteRow(_ entry: SFTPEntry) -> some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: entry.isDirectory ? "folder.fill" : "doc")
+                    .foregroundStyle(entry.isDirectory ? Color.accentColor : .secondary)
+                Text(entry.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-            .width(90)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            TableColumn("修改时间") { entry in
+            Text(entry.formattedSize)
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 80, alignment: .trailing)
+
+            Group {
                 if let date = entry.modified {
                     Text(date.formatted(.dateTime.year().month().day().hour().minute()))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                } else {
+                    Text(" ")
                 }
             }
-            .width(140)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .frame(width: 120, alignment: .leading)
 
-            TableColumn("权限") { entry in
-                Text(entry.permissionsText)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            .width(90)
+            Text(entry.permissionsText)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 76, alignment: .leading)
         }
-        .contextMenu(forSelectionType: SFTPEntry.self) { selection in
-            if let entry = selection.first {
-                entryMenu(entry)
-            }
-        } primaryAction: { selection in
-            guard let entry = selection.first else { return }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        // 双击整行 = 目录进入 / 文件预览（单击仍归 List 选中）
+        .onTapGesture(count: 2) {
             if entry.isDirectory {
                 Task { await sftp.list(path: entry.path) }
             } else {
-                // 双击文件 = 预览（文本可编辑写回；二进制给下载打开）
                 previewEntry = entry
             }
         }
