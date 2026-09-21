@@ -1,4 +1,5 @@
 import Foundation
+import Citadel
 
 /// 一次采样的服务器资源数据
 public struct ServerStats: Sendable, Equatable {
@@ -263,6 +264,9 @@ public final class ServerStatsService: ObservableObject {
     public static let historyCapacity = 60
 
     public let ssh: SSHSession
+    /// 专用统计连接（独立于终端 shell 连接：1s 级采样不再与键盘输入在同一条 SSH 连接上竞争）
+    private var dedicatedClient: SSHClient?
+    private var dedicatedFailures = 0
     private var pollTask: Task<Void, Never>?
     private var previous: ServerStatsParser.PreviousSample?
 
@@ -292,10 +296,24 @@ public final class ServerStatsService: ObservableObject {
         pollTask?.cancel()
         pollTask = nil
         isRunning = false
+        let client = dedicatedClient
+        dedicatedClient = nil
+        Task { try? await client?.close() }
     }
 
     /// 重量采集轮换计数：每 5 个周期跑一次 df/diskstats（重），其余周期只跑轻命令
     private var heavyTick = 0
+
+    /// 取统计连接（懒建 + 失败重建；与终端 shell 完全隔离）
+    private func statsClient() async throws -> SSHClient {
+        if let dedicatedClient { return dedicatedClient }
+        let connection = try await SSHConnectionFactory.connect(
+            to: ssh.host,
+            hostKeyCallback: { _ in false } // 仅直连已信任指纹的主机；未信任直接失败提示去 GUI 信任
+        )
+        dedicatedClient = connection.client
+        return connection.client
+    }
 
     public func sampleOnce() async {
         do {
@@ -304,7 +322,8 @@ public final class ServerStatsService: ObservableObject {
             let command = useHeavy
                 ? ServerStatsParser.command
                 : ServerStatsParser.lightCommand
-            let output = try await ssh.exec(command)
+            let client = try await statsClient()
+            let output = String(buffer: try await client.executeCommand(command))
             var result = ServerStatsParser.parse(output: output, previous: previous)
             // 轻轮没有 DISK/DISKIO 分节：沿用上轮的磁盘占用与 I/O（不闪空）
             if !useHeavy {
@@ -330,6 +349,13 @@ public final class ServerStatsService: ObservableObject {
                 if netTxHistory.count > Self.historyCapacity { netTxHistory.removeFirst(netTxHistory.count - Self.historyCapacity) }
             }
         } catch {
+            dedicatedFailures += 1
+            if dedicatedFailures >= 2 {
+                // 专用连接死了：关闭待重建（终端连接可能还活着）
+                try? await dedicatedClient?.close()
+                dedicatedClient = nil
+                dedicatedFailures = 0
+            }
             lastError = error.localizedDescription
         }
     }
