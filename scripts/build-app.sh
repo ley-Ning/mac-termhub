@@ -33,17 +33,19 @@ cp App/Resources/Icon.icns "${APP_DIR}/Contents/Resources/Icon.icns"
 # ad-hoc 签名每次编译都变，macOS 钥匙串 ACL 跟着签名走，会导致每次读密码都弹系统密码框；
 # 稳定身份下"始终允许"一次即永久生效。
 IDENTITY="$(security find-identity 2>/dev/null | grep -o 'TermHub Dev' | head -1)"
-if [[ -n "$IDENTITY" ]]; then
+sign_with_identity() {
+  codesign --force --sign "$IDENTITY" "$1" 2>/dev/null
+}
+if [[ -n "$IDENTITY" ]] && sign_with_identity "$APP_DIR"; then
   echo "==> codesign（稳定身份：$IDENTITY）"
-  codesign --force --sign "$IDENTITY" "$APP_DIR"
   # MCP / 冒烟二进制也读钥匙串，同样用稳定身份（存在才签）
   for bin in TermHubMCP TermHubSmoke; do
     if [[ -f "${BUILD_DIR}/release/${bin}" ]]; then
-      codesign --force --sign "$IDENTITY" "${BUILD_DIR}/release/${bin}"
+      sign_with_identity "${BUILD_DIR}/release/${bin}" || true
     fi
   done
 else
-  echo "==> ad-hoc 签名（未找到 TermHub Dev 身份；钥匙串会反复弹授权）"
+  echo "==> ad-hoc 签名（稳定身份不可用：钥匙串可能已锁，解锁登录钥匙串后自动恢复）"
   codesign --force --sign - "$APP_DIR"
 fi
 
