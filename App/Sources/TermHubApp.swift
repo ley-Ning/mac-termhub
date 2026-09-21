@@ -6,6 +6,7 @@ import TermHubUI
 @main
 struct TermHubApp: App {
     @State private var appState = AppState()
+    @StateObject private var updater = UpdateService()
 
     private let uiTest = ProcessInfo.processInfo.environment["TERMHUB_UITEST"] == "1"
 
@@ -31,6 +32,17 @@ struct TermHubApp: App {
             MainWindowView()
                 .environment(appState)
                 .modelContainer(container)
+                .environmentObject(updater)
+                .task {
+                    // 启动后台静默检查更新（本地仓库存在时）
+                    if !uiTest { await updater.checkForUpdates() }
+                }
+                .sheet(isPresented: Binding(
+                    get: { updater.showsUpdateSheet },
+                    set: { if !$0 { updater.showsUpdateSheet = false } }
+                )) {
+                    UpdateSheet(updater: updater)
+                }
         }
         .windowToolbarStyle(.unified)
         .commands {
@@ -45,6 +57,23 @@ struct TermHubApp: App {
                     NotificationCenter.default.post(name: .termHubQuickSwitch, object: nil)
                 }
                 .keyboardShortcut("k")
+            }
+            // 热更新：检查 + 一键安装（拉代码 → 稳定签名重建 → 自动重启）
+            CommandGroup(after: .appInfo) {
+                Button("检查更新…") {
+                    Task {
+                        await updater.checkForUpdates()
+                        updater.showsUpdateSheet = true
+                    }
+                }
+                .disabled(!updater.isAvailable)
+                if let badge = updater.updateBadgeText {
+                    Button("安装\(badge)（热更新）") {
+                        updater.installUpdate()
+                    }
+                    .keyboardShortcut("u")
+                    .disabled(updater.isUpdating)
+                }
             }
         }
     }
