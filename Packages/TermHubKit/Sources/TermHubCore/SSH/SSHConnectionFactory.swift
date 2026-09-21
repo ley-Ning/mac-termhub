@@ -133,10 +133,13 @@ public enum SSHConnectionFactory {
         // 之后在上一跳的连接上开 direct-tcpip 通道逐跳 SSH 握手到目标。
         // 临时凭据（override*）只作用于目标主机；各跳板用自身保存的凭据。
         var chain: [SSHClient] = []
-        var current = try await connectSingleHop(
-            to: firstHop,
-            hostKeyCallback: hostKeyCallback
-        )
+        var current: SSHClient
+        do {
+            current = try await connectSingleHop(to: firstHop, hostKeyCallback: hostKeyCallback)
+        } catch {
+            // 第一跳就没连上：同样给出跳板上下文（指纹类错误原样透传）
+            throw translateJumpError(error, at: firstHop)
+        }
         chain.append(current)
 
         do {
