@@ -15,9 +15,15 @@ public enum SSHSetupError: LocalizedError {
     case hostKeyChanged(host: String, oldFingerprint: String, newFingerprint: String)
     case proxyTunnelFailed(proxy: String, detail: String)
     case jumpConnectFailed(hop: String, detail: String)
+    case connectionTimeout(seconds: Int)
 
     public var errorDescription: String? {
         switch self {
+        case .connectionTimeout(let seconds):
+            return """
+            连接超时（\(seconds) 秒）——主机或代理不可达。
+            请确认网络/VPN 已连好，或主机地址是否正确，然后点「重新连接」。
+            """
         case .notConnected:
             return "会话未连接，请先连接主机"
         case .missingPassword:
@@ -108,10 +114,57 @@ public enum SSHConnectionFactory {
         }
     }
 
+    /// 连接超时（秒）：黑洞型主机（防火墙丢包、无 RST）会让 TCP 悬挂很久，
+    /// 统一兜底，超时立刻失败、允许用户马上重连。
+    public static let connectTimeout: TimeInterval = 20
+
     /// 连接。hostKeyCallback 仅在首次遇到该主机指纹时被调用（UI 弹窗确认）。
     /// jumpHosts：按顺序解析好的跳板链（不含目标；由调用侧查 SwiftData 传入，
     /// 避免本层反依赖 SwiftData）。跳板链上每一跳独立做 TOFU 校验与认证。
     public static func connect(
+        to host: HostSnapshot,
+        hostKeyCallback: @escaping @Sendable (TOFUHostKeyValidator.HostKeyFacts) async -> Bool,
+        jumpHosts: [HostSnapshot] = [],
+        overridePassword: String? = nil,
+        overridePassphrase: String? = nil
+    ) async throws -> SSHConnection {
+        try await withConnectTimeout(Self.connectTimeout) {
+            try await connectUnprotected(
+                to: host, hostKeyCallback: hostKeyCallback, jumpHosts: jumpHosts,
+                overridePassword: overridePassword, overridePassphrase: overridePassphrase
+            )
+        }
+    }
+
+    /// 超时竞速：body 与 sleep 赛跑，先完成者胜；body 的真实错误原样抛出
+    static func withConnectTimeout<T: Sendable>(
+        _ seconds: TimeInterval,
+        _ body: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: TimeoutBox<T>.self) { group in
+            group.addTask { .value(try await body()) }
+            group.addTask {
+                try await Task.sleep(for: .seconds(seconds))
+                return .timedOut
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else {
+                throw SSHSetupError.connectionTimeout(seconds: Int(seconds))
+            }
+            switch first {
+            case .value(let value): return value
+            case .timedOut: throw SSHSetupError.connectionTimeout(seconds: Int(seconds))
+            }
+        }
+    }
+
+    private enum TimeoutBox<T: Sendable>: Sendable {
+        case value(T)
+        case timedOut
+    }
+
+    /// connect 的实现体（已由公开 connect 包超时）
+    static func connectUnprotected(
         to host: HostSnapshot,
         hostKeyCallback: @escaping @Sendable (TOFUHostKeyValidator.HostKeyFacts) async -> Bool,
         jumpHosts: [HostSnapshot] = [],

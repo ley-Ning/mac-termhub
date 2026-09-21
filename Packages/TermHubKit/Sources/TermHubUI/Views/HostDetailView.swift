@@ -106,6 +106,8 @@ public struct HostDetailView: View {
                 Button("断开") { appState.disconnect(session) }
             case .connecting:
                 Button("取消") { appState.disconnect(session) }
+            case .failed, .closed:
+                Button("重新连接") { appState.reconnect(session) }
             default:
                 Button("连接") { appState.reconnect(session) }
             }
