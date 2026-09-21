@@ -1,9 +1,11 @@
 import SwiftUI
+import AppKit
 import TermHubCore
 
-/// 设置：外观模式 / 强调色 / 终端配色（即时生效，UserDefaults 持久化）
+/// 设置：外观模式 / 强调色 / 终端配色 / 语言（即时生效，UserDefaults 持久化）
 public struct SettingsView: View {
     @ObservedObject private var theme = ThemeSettings.shared
+    @State private var language = ThemeSettings.AppLanguage.current
 
     public init() {}
 
@@ -18,6 +20,33 @@ public struct SettingsView: View {
 
     private var appearanceTab: some View {
         Form {
+            Section("语言 / Language") {
+                Picker("语言", selection: $language) {
+                    ForEach(ThemeSettings.AppLanguage.allCases) { lang in
+                        Text(lang.label).tag(lang)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                if language != ThemeSettings.AppLanguage.current {
+                    HStack(spacing: 8) {
+                        Label("重启后生效", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button("重启") {
+                            language.apply()
+                            // 借热更新的重启路径：退出并以新语言拉起
+                            let repo = NSString(string: "~/WorkBuddy/TermHub").expandingTildeInPath
+                            let proc = Process()
+                            proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                            proc.arguments = ["-c", "sleep 1; open '\(repo)/build/TermHub.app'"]
+                            try? proc.run()
+                            NSApplication.shared.terminate(nil)
+                        }
+                    }
+                }
+            }
             Section("外观模式") {
                 Picker("模式", selection: $theme.appearance) {
                     ForEach(ThemeSettings.Appearance.allCases) { mode in

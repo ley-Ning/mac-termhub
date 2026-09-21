@@ -112,6 +112,45 @@ public final class ThemeSettings: ObservableObject {
         ]
     }
 
+    /// 界面语言（写 AppleLanguages，重启生效；key=中文原文的 Localizable 映射）
+    public enum AppLanguage: String, CaseIterable, Identifiable {
+        case system
+        case chinese = "zh-Hans"
+        case english = "en"
+
+        public var id: String { rawValue }
+
+        public var label: String {
+            switch self {
+            case .system: return "跟随系统 / Auto"
+            case .chinese: return "简体中文"
+            case .english: return "English"
+            }
+        }
+
+        /// 当前生效选择（AppleLanguages 首项映射，未设置=system）
+        public static var current: AppLanguage {
+            let first = UserDefaults.standard.stringArray(forKey: "AppleLanguages")?.first
+            switch first {
+            case "zh-Hans": return .chinese
+            case "en": return .english
+            default: return .system
+            }
+        }
+
+        public func apply() {
+            let defaults = UserDefaults.standard
+            switch self {
+            case .system:
+                defaults.removeObject(forKey: "AppleLanguages")
+            case .chinese:
+                defaults.set(["zh-Hans"], forKey: "AppleLanguages")
+            case .english:
+                defaults.set(["en"], forKey: "AppleLanguages")
+            }
+        }
+    }
+
     private enum Keys {
         static let appearance = "theme.appearance"
         static let accent = "theme.accent"

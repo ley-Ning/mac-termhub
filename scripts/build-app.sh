@@ -28,6 +28,8 @@ fi
 
 # 应用图标（独立于 SwiftPM 资源，配合 Info.plist 的 CFBundleIconFile）
 cp App/Resources/Icon.icns "${APP_DIR}/Contents/Resources/Icon.icns"
+# 多语言资源（key=中文原文的英文映射表；zh-Hans 为开发语言占位）
+cp -R App/Resources/en.lproj App/Resources/zh-Hans.lproj "${APP_DIR}/Contents/Resources/" 2>/dev/null || true
 
 # 稳定签名身份：自签名 "TermHub Dev"（导入登录钥匙串后长期不变）。
 # ad-hoc 签名每次编译都变，macOS 钥匙串 ACL 跟着签名走，会导致每次读密码都弹系统密码框；

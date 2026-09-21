@@ -1,0 +1,196 @@
+/* TermHub English localization — keys are the Chinese source strings;
+   untranslated keys automatically fall back to Chinese. */
+
+/* Common */
+"取消" = "Cancel";
+"确定" = "OK";
+"创建" = "Create";
+"删除" = "Delete";
+"删除…" = "Delete…";
+"关闭" = "Close";
+"打开" = "Open";
+"进入" = "Enter";
+"重试" = "Retry";
+"完成" = "Done";
+"保存" = "Save";
+"名称" = "Name";
+"大小" = "Size";
+"修改时间" = "Modified";
+"权限" = "Permissions";
+"用户名" = "User";
+"别名" = "Alias";
+"分组" = "Group";
+"分组名" = "Group Name";
+"类型" = "Type";
+"方式" = "Method";
+"方案" = "Scheme";
+"模式" = "Mode";
+"无" = "None";
+"视图" = "View";
+"备注（可选）" = "Notes (optional)";
+"主机地址" = "Host";
+"代理地址" = "Proxy Host";
+"端口" = "Port";
+
+/* Sidebar & hosts */
+"搜索主机（别名 / 地址 / 用户名 / 备注）" = "Search hosts (alias / address / user / notes)";
+"新增主机" = "New Host";
+"新增主机…" = "New Host…";
+"编辑…" = "Edit…";
+"连接" = "Connect";
+"断开" = "Disconnect";
+"重新连接" = "Reconnect";
+"连接中…" = "Connecting…";
+"已连接" = "Connected";
+"已断开" = "Disconnected";
+"未连接" = "Not Connected";
+"复制主机" = "Duplicate Host";
+"移动到分组" = "Move to Group";
+"新建分组并移入" = "Move to New Group";
+"新建分组并移入…" = "Move to New Group…";
+"重命名分组" = "Rename Group";
+"重命名分组…" = "Rename Group…";
+"解散分组（主机移回默认）" = "Dissolve Group (hosts move to default)";
+"默认" = "Default";
+"在侧边栏添加你的第一台服务器" = "Add your first server in the sidebar";
+"左侧 + 按钮新增主机，点选主机即连接" = "Use the + button to add a host; click to connect";
+"快速切换主机…" = "Quick Switch Host…";
+"设置密码后连接" = "Set Password to Connect";
+"跳板机" = "Jump Host";
+"跳板链成环" = "Jump Chain Cycle";
+"所选跳板链会形成循环，请调整「经由跳板机」设置后再保存。" = "The selected jump chain forms a cycle. Adjust the jump host setting before saving.";
+"返回修改" = "Go Back";
+"信任并连接" = "Trust & Connect";
+"拒绝" = "Deny";
+"首次连接该主机" = "First connection to this host";
+"测试连接" = "Test Connection";
+"测试中…" = "Testing…";
+"连接超时" = "Connection timeout";
+"重连中…" = "Reconnecting…";
+"已重连（新 shell）" = "Reconnected (new shell)";
+
+/* Terminal */
+"终端" = "Terminal";
+"新建终端" = "New Terminal";
+"没有打开的终端" = "No open terminals";
+"终端已关闭" = "Terminal closed";
+"重新打开" = "Reopen";
+"等待连接…" = "Waiting for connection…";
+"正在启动 shell…" = "Starting shell…";
+"清屏" = "Clear";
+"⏎ 连接" = "⏎ Connect";
+"↑↓ 选择" = "↑↓ Select";
+"Esc 关闭" = "Esc to close";
+
+/* Tool panels */
+"工具面板" = "Tool Panels";
+"容器" = "Containers";
+"文件" = "Files";
+"资源" = "Stats";
+"进程" = "Processes";
+"片段" = "Snippets";
+"Docker 不可用" = "Docker unavailable";
+"docker ps 没有返回任何容器" = "docker ps returned no containers";
+"查看日志…" = "View Logs…";
+"启动" = "Start";
+"停止" = "Stop";
+"重启" = "Restart";
+"导出…" = "Export…";
+"未检测" = "Not Detected";
+"未保存" = "Not Saved";
+"仅本机" = "This Mac only";
+"活跃" = "Active";
+
+/* Files panel */
+"上一级" = "Up";
+"新建目录" = "New Folder";
+"新建目录…" = "New Folder…";
+"新建文件" = "New File";
+"新建文件…" = "New File…";
+"目录名" = "Folder name";
+"文件名" = "File name";
+"上传" = "Upload";
+"上传到远端" = "Upload to Remote";
+"下载到本地…" = "Download…";
+"下载到临时目录并用默认应用打开" = "Download to temp and open";
+"预览" = "Preview";
+"预览 / 编辑" = "Preview / Edit";
+"复制" = "Copy";
+"剪切" = "Cut";
+"粘贴" = "Paste";
+"复制路径" = "Copy Path";
+"复制内容" = "Copy Content";
+"复制命令行" = "Copy Command Line";
+"重命名…" = "Rename…";
+"重命名" = "Rename";
+"重命名本地项" = "Rename Local Item";
+"确认删除" = "Confirm Delete";
+"加可执行 (+x)" = "Add executable (+x)";
+"用默认应用打开" = "Open with Default App";
+"在 Finder 中显示" = "Reveal in Finder";
+"移到废纸篓" = "Move to Trash";
+"新建本地文件夹" = "New Local Folder";
+"文件夹名" = "Folder name";
+"输入远端路径后回车" = "Type a remote path and press Return";
+"传输" = "Transfers";
+"清除已完成" = "Clear Finished";
+"无法预览（二进制文件或超过 512KB）" = "Cannot preview (binary or > 512KB)";
+"（无数据）" = "(no data)";
+"选择…" = "Choose…";
+"私钥路径（~/.ssh/id_ed25519）" = "Private key path (~/.ssh/id_ed25519)";
+"SFTP 打开失败" = "Failed to open SFTP";
+
+/* Stats panel */
+"CPU" = "CPU";
+"内存" = "Memory";
+"网络" = "Network";
+"磁盘" = "Disk";
+"磁盘 I/O" = "Disk I/O";
+"刷新" = "Refresh";
+"await = 平均耗时 · util = 繁忙率" = "await = avg latency · util = busy %";
+"连接后自动采集 /proc/diskstats" = "Auto-collects /proc/diskstats after connecting";
+
+/* Processes */
+"结束进程" = "Kill Process";
+"结束进程 (kill)…" = "Kill…";
+"强制结束 (kill -9)…" = "Force Kill (kill -9)…";
+"过滤（命令/用户/PID/端口）" = "Filter (command/user/PID/port)";
+"仅展示 CPU 占用前 15 个进程" = "Showing top 15 processes by CPU";
+
+/* Snippets */
+"搜索片段" = "Search snippets";
+"发送到终端" = "Send to Terminal";
+"删除片段" = "Delete Snippet";
+"保存到服务器" = "Save to Server";
+"标题（如：重启 nginx）" = "Title (e.g. restart nginx)";
+"关闭则为全局片段，所有主机的片段面板都可见。" = "Off = global snippet, visible on all hosts.";
+
+/* Settings */
+"设置…" = "Settings…";
+"设置" = "Settings";
+"外观" = "Appearance";
+"外观模式" = "Appearance";
+"跟随系统" = "Match System";
+"浅色" = "Light";
+"深色" = "Dark";
+"强调色" = "Accent Color";
+"终端配色" = "Terminal Scheme";
+"会话" = "Session";
+"预览（16 色）" = "Preview (16 colors)";
+"意外掉线自动重连" = "Auto-reconnect on drop";
+"心跳保活（防空闲断开）" = "Keepalive heartbeat";
+"心跳间隔" = "Heartbeat Interval";
+"多行粘贴前确认" = "Confirm multi-line paste";
+"语言" = "Language";
+"重启后生效" = "Takes effect after restart";
+
+/* Update */
+"检查更新…" = "Check for Updates…";
+"检查失败" = "Check Failed";
+"正在检查远端更新…" = "Checking for updates…";
+"等待检查" = "Waiting";
+"正在热更新" = "Updating";
+"立即热更新" = "Update Now";
+"已是最新版本" = "Up to date";
+"重启" = "Restart";
+"重试检查" = "Retry Check";
