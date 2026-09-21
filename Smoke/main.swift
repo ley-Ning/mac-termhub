@@ -1,6 +1,8 @@
 // TermHubSmoke：对真实服务器验证 Core 层（连接 / exec / docker / SFTP）
-// 用法：swift run TermHubSmoke [host] [user] [keyPath] [--password XXX]
+// 用法：swift run TermHubSmoke [host] [user] [keyPath] [--password-stdin]
 //       TermHubSmoke --seed  向共享库种入 root@163（MCP 端到端测试用）
+//       TermHubSmoke --import <file.json|-stdin路径"-"时从标准输入读，密码不落盘>
+//       TermHubSmoke --security-audit  审计：凭据仅存在于钥匙串、无明文落盘
 import TermHubCore
 import Citadel
 import Crypto
@@ -65,8 +67,9 @@ if args.contains("--seed-cc26039") {
     }
 }
 
-// --import <file.json>：批量导入主机（HexHub 等外部工具迁移）。
+// --import <file.json 或 "-">：批量导入主机（HexHub 等外部工具迁移）。
 // JSON 数组，元素：alias/hostname/port/username/auth(password|key)/keyPath?/password?/group?/notes?/proxyHost?/proxyPort?
+// 带 password 的敏感导入请用 "-"（stdin 管道），密码不落盘：cat hosts.json | TermHubSmoke --import -
 if let importIndex = args.firstIndex(of: "--import"), importIndex + 1 < args.count {
     struct ImportHost: Codable {
         var alias: String
@@ -83,8 +86,15 @@ if let importIndex = args.firstIndex(of: "--import"), importIndex + 1 < args.cou
         var force: Bool?
     }
     do {
-        let data = try Data(contentsOf: URL(fileURLWithPath: args[args.index(after: importIndex)]))
+        let pathArg = args[args.index(after: importIndex)]
+        let data: Data
+        if pathArg == "-" {
+            data = FileHandle.standardInput.readDataToEndOfFile()
+        } else {
+            data = try Data(contentsOf: URL(fileURLWithPath: pathArg))
+        }
         let list = try JSONDecoder().decode([ImportHost].self, from: data)
+        let carriesSecrets = list.contains { $0.password != nil || $0.keyPath != nil }
         let container = try AppStorage.makeSharedContainer()
         let context = ModelContext(container)
         let existing = try context.fetch(FetchDescriptor<SSHHost>())
@@ -125,9 +135,74 @@ if let importIndex = args.firstIndex(of: "--import"), importIndex + 1 < args.cou
             imported += 1
         }
         print("导入完成：\(imported) 台，跳过 \(skipped) 台（库：\(AppStorage.sharedStoreURL.path)）")
+        if pathArg != "-" && carriesSecrets {
+            print("⚠️ 本次导入文件含密码明文且走了磁盘文件。建议：cat file.json | TermHubSmoke --import -（stdin，不落盘），并立即删除该文件。")
+        }
         exit(0)
     } catch {
         print("❌ 导入失败：\(error.localizedDescription)")
+        exit(1)
+    }
+}
+
+// --security-audit：证明"凭据仅存在于钥匙串"——把 Keychain 里每条密码/口令明文
+// 拿去搜索所有落盘文件的字节（store/偏好/片段/known_hosts），命中即明文泄漏。
+if args.contains("--security-audit") {
+    do {
+        let container = try AppStorage.makeSharedContainer()
+        let context = ModelContext(container)
+        let hosts = try context.fetch(FetchDescriptor<SSHHost>())
+
+        // 待扫描的全部落盘文件（存在才扫）；store 的 WAL/SHM 也要扫——删除过的行字节会残留在里面
+        let storePath = AppStorage.sharedStoreURL.path
+        let candidates: [String] = [
+            storePath,                                                                 storePath + "-wal",
+            storePath + "-shm",
+            AppStorage.supportDirectory.appending(path: "snippets.json").path,   // 命令片段
+            AppStorage.supportDirectory.appending(path: "known_hosts.json").path,// TOFU 指纹
+            NSHomeDirectory() + "/Library/Preferences/TermHub.plist",
+            NSHomeDirectory() + "/Library/Preferences/com.termhub.app.plist",
+        ]
+        var targets: [(path: String, data: Data)] = []
+        for path in candidates {
+            if let data = FileManager.default.contents(atPath: path) {
+                targets.append((path, data))
+            }
+        }
+
+        var secretCount = 0
+        var skippedShort = 0
+        var leaks = 0
+        print("开始读取钥匙串凭据（若钥匙串已锁，此处会等待解锁——在弹窗里输入登录密码即可）…")
+        for host in hosts {
+            for kind in [KeychainStore.SecretKind.password, .passphrase] {
+                guard let secret = KeychainStore.read(kind: kind, hostID: host.id),
+                      !secret.isEmpty else { continue }
+                secretCount += 1
+                // 短密码（<6 字符）作为子串会命中大量正常数据（如用户名 mw），字节搜索不可判，跳过
+                guard secret.count >= 6 else {
+                    skippedShort += 1
+                    print("⊘ [\(host.alias)] 密码仅 \(secret.count) 字符，子串搜索不可判，跳过（凭据本身仍仅在钥匙串）")
+                    continue
+                }
+                for target in targets where target.data.range(of: Data(secret.utf8)) != nil {
+                    print("❌ 明文泄漏：[\(host.alias)] 的\(kind == .password ? "密码" : "私钥口令")出现在 \(target.path)")
+                    leaks += 1
+                }
+            }
+        }
+
+        print("扫描文件：\(targets.map(\.path).joined(separator: "\n         "))")
+        if secretCount == 0 {
+            print("⚠️ 钥匙串中无凭据可审计（先在 GUI 保存至少一条密码）")
+        } else if leaks == 0 {
+            print("✅ 审计通过：\(secretCount) 条凭据仅存在于钥匙串，\(targets.count) 个落盘文件零明文命中\(skippedShort > 0 ? "（\(skippedShort) 条短密码除外，见上）" : "")")
+        } else {
+            print("❌ 审计失败：\(leaks) 处明文泄漏")
+        }
+        exit(leaks == 0 ? 0 : 1)
+    } catch {
+        print("❌ 审计失败：\(error.localizedDescription)")
         exit(1)
     }
 }
@@ -164,9 +239,19 @@ if args.contains("--seed") {
 let host = args.count > 0 ? args[0] : "192.168.2.163"
 let user = args.count > 1 ? args[1] : "mw"
 let keyPath = args.count > 2 ? args[2] : NSString(string: "~/.ssh/id_ed25519").expandingTildeInPath
-// --password XXX 切换为密码认证对照实验
-let pwIndex = args.firstIndex(of: "--password")
-let passwordOverride: String? = pwIndex != nil && pwIndex! + 1 < args.count ? args[args.index(after: pwIndex!)] : nil
+// --password-stdin：从标准输入读密码（管道传递，不进 shell history / ps 进程列表）
+if let i = args.firstIndex(of: "--password"), i + 1 < args.count {
+    print("❌ --password <明文> 已禁用（命令行参数会留在 shell history 与 ps 输出里）。")
+    print("   请改用：echo '密码' | TermHubSmoke … --password-stdin")
+    exit(2)
+}
+let pwStdinIndex = args.firstIndex(of: "--password-stdin")
+let passwordOverride: String? = {
+    guard pwStdinIndex != nil else { return nil }
+    let raw = String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}()
 // --proxy host:port 走 HTTP 代理连接
 let proxyIndex = args.firstIndex(of: "--proxy")
 let proxyParts: (host: String, port: Int)? = {
