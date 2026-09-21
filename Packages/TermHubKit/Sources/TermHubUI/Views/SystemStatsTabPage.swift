@@ -5,7 +5,7 @@ import TermHubCore
 public struct SystemStatsTabPage: View {
     @ObservedObject private var hostSession: HostSession
     @StateObject private var stats: ServerStatsService
-    @State private var pollSeconds: Double = 3
+    @State private var pollSeconds: Double = 1
 
     public init(hostSession: HostSession) {
         self.hostSession = hostSession
@@ -70,6 +70,7 @@ public struct SystemStatsTabPage: View {
                 Label(stats.stats.uptimeText, systemImage: "clock")
                 Spacer()
                 Picker("刷新", selection: $pollSeconds) {
+                    Text("1s").tag(1.0)
                     Text("2s").tag(2.0)
                     Text("3s").tag(3.0)
                     Text("5s").tag(5.0)
@@ -95,7 +96,7 @@ public struct SystemStatsTabPage: View {
         HStack(spacing: 14) {
             gaugeCard(
                 title: "CPU",
-                value: stats.stats.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "采样中…",
+                value: stats.stats.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "—",
                 ratio: (stats.stats.cpuPercent ?? 0) / 100,
                 history: stats.cpuHistory,
                 historyMax: 100,
@@ -230,8 +231,8 @@ public struct SystemStatsTabPage: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            if stats.stats.diskIO.isEmpty {
-                Text(stats.isRunning ? "采样中…（速率与耗时需两次采样）" : "连接后自动采集 /proc/diskstats")
+            if stats.stats.diskIO.isEmpty, !stats.isRunning {
+                Text("连接后自动采集 /proc/diskstats")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -312,7 +313,7 @@ public struct SystemStatsTabPage: View {
     }
 
     private func formatRate(_ value: Double?) -> String {
-        guard let value else { return "采样中…" }
+        guard let value else { return "—" }
         let formatter = ByteCountFormatter()
         formatter.countStyle = .memory
         return formatter.string(fromByteCount: Int64(value)) + "/s"
