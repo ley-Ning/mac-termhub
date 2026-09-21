@@ -1,6 +1,6 @@
 cask "termhub" do
   version "0.3.1"
-  sha256 :no_check  # 待 v0.3.1 产物落地后自动钉值
+  sha256 "40c08ade21ea465b8ab1068b1a829a98db795ab7c34d835d9b1bb590a66fa849"
 
   url "https://github.com/ley-Ning/mac-termhub/releases/download/v#{version}/TermHub-#{version}.dmg"
   name "TermHub"
