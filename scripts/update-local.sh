@@ -15,7 +15,7 @@ echo "==> 检查远端更新（origin/main）"
 git fetch origin main --quiet 2>/dev/null || { echo "⚠️ 无法访问远端（代理 ${https_proxy}）"; exit 2; }
 LOCAL=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse origin/main)
-if [[ "$1" == "--check-only" ]]; then
+if [[ "${1:-}" == "--check-only" ]]; then
   if [[ "$LOCAL" == "$REMOTE" ]]; then
     echo "UP_TO_DATE $LOCAL"
   else
