@@ -33,7 +33,7 @@ public struct HostDetailView: View {
 
     @ViewBuilder
     private func toolPanel(_ tool: HostSession.ToolPanel) -> some View {
-        // 不加面板标题条：详情页头部已有三个工具开关，面板内容自带各自工具栏
+        // 不加面板标题条：详情页头部已有工具开关，面板内容自带各自工具栏
         switch tool {
         case .docker:
             DockerTabPage(hostSession: session)
@@ -41,6 +41,10 @@ public struct HostDetailView: View {
             FilesTabPage(hostSession: session)
         case .stats:
             SystemStatsTabPage(hostSession: session)
+        case .process:
+            ProcessTabPage(hostSession: session)
+        case .snippets:
+            SnippetsTabPage(hostSession: session)
         }
     }
 
@@ -55,6 +59,19 @@ public struct HostDetailView: View {
                     .truncationMode(.tail)
                     .help(message)
             }
+            // 自动重连状态徽章
+            if let attempt = session.ssh.autoReconnectAttempt {
+                Label("重连中…（第 \(attempt) 次）", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .help("连接已意外断开，正在自动重连（指数退避，最多 5 次）")
+            }
+            if session.ssh.didAutoReconnect {
+                Label("已重连（新 shell）", systemImage: "checkmark.seal")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("连接由自动重连恢复，终端是新的 shell（工作目录/前台进程不保留）")
+            }
             Spacer()
             switch session.ssh.phase {
             case .connected:
@@ -65,6 +82,8 @@ public struct HostDetailView: View {
                 Button("连接") { appState.reconnect(session) }
             }
             Divider().frame(height: 16)
+            // 会话设置：保活/自动重连/粘贴保护
+            sessionSettingsMenu
             // 工具面板开关：与终端并排显示，不是切换
             ForEach(HostSession.ToolPanel.allCases) { tool in
                 Button {
@@ -85,6 +104,52 @@ public struct HostDetailView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 6)
+    }
+
+    /// 会话设置菜单（UserDefaults 持久化，对所有会话生效）
+    private var sessionSettingsMenu: some View {
+        Menu {
+            Toggle(
+                "意外掉线自动重连",
+                isOn: Binding(
+                    get: { SSHSessionSettings.reconnectEnabled },
+                    set: { SSHSessionSettings.reconnectEnabled = $0 }
+                )
+            )
+            Toggle(
+                "心跳保活（防空闲断开）",
+                isOn: Binding(
+                    get: { SSHSessionSettings.keepaliveEnabled },
+                    set: { SSHSessionSettings.keepaliveEnabled = $0 }
+                )
+            )
+            Picker(
+                "心跳间隔",
+                selection: Binding(
+                    get: { SSHSessionSettings.keepaliveInterval },
+                    set: { SSHSessionSettings.keepaliveInterval = $0 }
+                )
+            ) {
+                ForEach([15.0, 30.0, 60.0], id: \.self) { seconds in
+                    Text("\(Int(seconds)) 秒").tag(seconds)
+                }
+            }
+            Divider()
+            Toggle(
+                "多行粘贴前确认",
+                isOn: Binding(
+                    get: { PasteProtectSettings.enabled },
+                    set: { PasteProtectSettings.enabled = $0 }
+                )
+            )
+        } label: {
+            Image(systemName: "gearshape")
+                .frame(width: 26, height: 22)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("会话设置（保活 / 自动重连 / 粘贴保护）")
     }
 }
 

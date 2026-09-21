@@ -303,6 +303,12 @@ private struct SidebarRowShell: View {
                     .foregroundStyle(.secondary)
                     .help(host.proxyDescription ?? "HTTP 代理")
             }
+            if host.jumpHostID != nil {
+                Image(systemName: "arrow.turn.up.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("经由跳板机连接")
+            }
             if host.authMethod == .key {
                 Image(systemName: "key")
                     .font(.caption)

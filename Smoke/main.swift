@@ -231,7 +231,7 @@ if wantsStats {
                 return true
             },
             overridePassword: passwordOverride
-        )
+        ).client
         var previous: ServerStatsParser.PreviousSample?
         for round in 1...2 {
             let output = String(buffer: try await client.executeCommand(ServerStatsParser.command))
@@ -315,7 +315,7 @@ do {
         },
         overridePassword: passwordOverride,
         overridePassphrase: nil
-    )
+    ).client
 } catch {
     print("❌ 连接失败：\(error.localizedDescription)")
     if let citadelErr = error as? CitadelError {

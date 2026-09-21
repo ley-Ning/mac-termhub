@@ -13,6 +13,17 @@ macOS 原生 SSH 可视化管理客户端（类 HexHub）：SwiftUI + SwiftTerm 
 - **HTTP 代理**：可按主机配置 CONNECT 隧道代理直连客户现场
 - **MCP**（`TermHubMCP`，stdio JSON-RPC）：AI 客户端可用 list_hosts / exec / docker_status / docker_logs / server_stats 操作主机；凭据零暴露（密码只存 Keychain、工具响应不含任何凭据字段、仅连已信任指纹的主机）
 
+## 安装
+
+- **直接下载**：到 [Releases](https://github.com/ley-Ning/mac-termhub/releases) 下载最新 `TermHub-x.y.z.dmg`，拖入「应用程序」即可。ad-hoc 签名，首次打开右键 → 打开。
+- **Homebrew**（无需 tap）：
+
+```bash
+brew install --cask https://raw.githubusercontent.com/ley-Ning/mac-termhub/main/Casks/termhub.rb
+```
+
+- **从源码**：打 tag `v*` 会自动构建并发布 Release（见 `.github/workflows/release.yml`）。
+
 ## 构建
 
 ```bash

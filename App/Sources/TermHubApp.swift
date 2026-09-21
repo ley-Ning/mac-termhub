@@ -40,6 +40,12 @@ struct TermHubApp: App {
                 }
                 .keyboardShortcut("n")
             }
+            CommandGroup(after: .newItem) {
+                Button("快速切换主机…") {
+                    NotificationCenter.default.post(name: .termHubQuickSwitch, object: nil)
+                }
+                .keyboardShortcut("k")
+            }
         }
     }
 }

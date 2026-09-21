@@ -6,6 +6,8 @@ import TermHubCore
 public extension Notification.Name {
     /// 菜单“新增主机”命令 -> 侧边栏弹新增表单
     public static let termHubNewHost = Notification.Name("termHubNewHost")
+    /// 菜单“快速切换主机”命令（Cmd+K）-> 主窗口弹命令面板
+    public static let termHubQuickSwitch = Notification.Name("termHubQuickSwitch")
 }
 
 /// 首次指纹确认弹窗的数据
@@ -23,6 +25,8 @@ public final class HostSession: ObservableObject {
         case docker
         case files
         case stats
+        case process
+        case snippets
 
         public var id: String { rawValue }
 
@@ -31,6 +35,8 @@ public final class HostSession: ObservableObject {
             case .docker: return "容器"
             case .files: return "文件"
             case .stats: return "资源"
+            case .process: return "进程"
+            case .snippets: return "片段"
             }
         }
 
@@ -39,6 +45,8 @@ public final class HostSession: ObservableObject {
             case .docker: return "cube.box"
             case .files: return "folder"
             case .stats: return "gauge.with.dots.needle.bottom.50percent"
+            case .process: return "list.bullet.rectangle"
+            case .snippets: return "text.badge.plus"
             }
         }
     }
@@ -96,24 +104,48 @@ public final class AppState {
 
     private var hostKeyHandler: (@Sendable (TOFUHostKeyValidator.HostKeyFacts) async -> Bool)?
 
+    /// 主机目录提供者：连接时现查 SwiftData，解析跳板链用（由主窗口注入，
+    /// TermHubCore 不反依赖 SwiftData）
+    public var hostCatalogProvider: (() -> [HostSnapshot])?
+
+    /// 沿 jumpHostID 解析跳板链（第一跳在前，不含目标）。
+    /// 环/断链在途经处截断（表单保存处已做环校验，这里兜底防死循环）。
+    public func resolveJumpChain(for snapshot: HostSnapshot) -> [HostSnapshot] {
+        guard let catalog = hostCatalogProvider?() else { return [] }
+        var byID: [UUID: HostSnapshot] = [:]
+        for host in catalog { byID[host.id] = host }
+
+        var chain: [HostSnapshot] = []
+        var visited: Set<UUID> = [snapshot.id]
+        var cursor = snapshot.jumpHostID
+        while let jumpID = cursor {
+            guard !visited.contains(jumpID), let hop = byID[jumpID] else { break }
+            chain.append(hop)
+            visited.insert(jumpID)
+            cursor = hop.jumpHostID
+        }
+        return chain
+    }
+
     /// 选中即连接（不存在会话则建立；已存在且断了则重连）
     @discardableResult
     public func openSession(for snapshot: HostSnapshot) -> HostSession {
+        let chain = resolveJumpChain(for: snapshot)
         if let existing = sessions[snapshot.id] {
             if !existing.ssh.phase.isAlive {
-                existing.ssh.open(hostKeyCallback: sendableHostKeyHandler)
+                existing.ssh.open(hostKeyCallback: sendableHostKeyHandler, jumpHosts: chain)
             }
             return existing
         }
         let session = HostSession(host: snapshot)
         sessions[snapshot.id] = session
-        session.ssh.open(hostKeyCallback: sendableHostKeyHandler)
+        session.ssh.open(hostKeyCallback: sendableHostKeyHandler, jumpHosts: chain)
         return session
     }
 
     /// 详情页“连接/重连”按钮走这里（带指纹弹窗）
     func reconnect(_ session: HostSession) {
-        session.ssh.open(hostKeyCallback: sendableHostKeyHandler)
+        session.ssh.open(hostKeyCallback: sendableHostKeyHandler, jumpHosts: resolveJumpChain(for: session.ssh.host))
     }
 
     func disconnect(_ session: HostSession) {

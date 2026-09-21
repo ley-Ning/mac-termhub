@@ -6,6 +6,7 @@ import TermHubCore
 public struct HostEditView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Query private var allHosts: [SSHHost]
 
     let host: SSHHost?
 
@@ -22,6 +23,9 @@ public struct HostEditView: View {
     @State private var proxyType: HostProxyType = .none
     @State private var proxyHost = ""
     @State private var proxyPort = 7217
+    @State private var jumpHostID: UUID?
+    /// 跳板链成环时的提示
+    @State private var showingJumpCycleAlert = false
 
     @State private var testState: TestState = .idle
 
@@ -40,6 +44,39 @@ public struct HostEditView: View {
     private var hasSavedPassphrase: Bool {
         guard let host else { return false }
         return KeychainStore.read(kind: .passphrase, hostID: host.id) != nil
+    }
+
+    /// 跳板候选：其余已保存主机（不含自己）
+    private var jumpCandidates: [SSHHost] {
+        allHosts
+            .filter { $0.id != host?.id }
+            .sorted { $0.alias < $1.alias }
+    }
+
+    /// 沿表单选择的跳板链走 visited 集，成环返回 true（保存时拒绝）
+    private func jumpChainHasCycle() -> Bool {
+        var visited: Set<UUID> = []
+        var cursor = jumpHostID
+        while let id = cursor {
+            // 回到已走过的节点（含被编辑主机自身）即成环
+            if !visited.insert(id).inserted { return true }
+            cursor = allHosts.first(where: { $0.id == id })?.jumpHostID
+        }
+        return false
+    }
+
+    /// 按表单当前选择解析跳板链快照（测试连接用；与 AppState.resolveJumpChain 同规则）
+    private func jumpChainFromForm() -> [HostSnapshot] {
+        var chain: [HostSnapshot] = []
+        var visited: Set<UUID> = []
+        var cursor = jumpHostID
+        while let id = cursor, !visited.contains(id),
+              let hopModel = allHosts.first(where: { $0.id == id }) {
+            chain.append(hopModel.snapshot)
+            visited.insert(id)
+            cursor = hopModel.jumpHostID
+        }
+        return chain
     }
 
     public var body: some View {
@@ -99,6 +136,21 @@ public struct HostEditView: View {
                     }
                 }
 
+                Section("经由跳板机") {
+                    Picker("跳板机", selection: $jumpHostID) {
+                        Text("无").tag(UUID?.none)
+                        ForEach(jumpCandidates) { candidate in
+                            Text(candidate.alias.isEmpty ? candidate.hostname : candidate.alias)
+                                .tag(UUID?.some(candidate.id))
+                        }
+                    }
+                    if jumpHostID != nil {
+                        Text("连接时先登录所选主机，再经它转发到本机（支持多级跳板，逐台配置即可）")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("备注") {
                     TextField("备注（可选）", text: $notes, axis: .vertical)
                         .lineLimit(2...4)
@@ -146,6 +198,11 @@ public struct HostEditView: View {
         }
         .frame(width: 520, height: 560)
         .onAppear(perform: load)
+        .alert("跳板链成环", isPresented: $showingJumpCycleAlert) {
+            Button("返回修改", role: .cancel) {}
+        } message: {
+            Text("所选跳板链会形成循环，请调整「经由跳板机」设置后再保存。")
+        }
     }
 
     private var formValid: Bool {
@@ -166,6 +223,7 @@ public struct HostEditView: View {
         proxyType = host.proxyType
         proxyHost = host.proxyHost ?? ""
         proxyPort = host.proxyPort ?? 7217
+        jumpHostID = host.jumpHostID
     }
 
     private func chooseKeyFile() {
@@ -193,14 +251,17 @@ public struct HostEditView: View {
             notes: notes,
             proxyType: proxyType,
             proxyHost: proxyType == .http ? proxyHost : nil,
-            proxyPort: proxyType == .http ? proxyPort : nil
+            proxyPort: proxyType == .http ? proxyPort : nil,
+            jumpHostID: jumpHostID
         )
+        let jumpHosts = jumpChainFromForm()
         testState = .testing
         Task {
             let started = Date()
             do {
-                // 测试连接：新指纹自动信任（结果里展示指纹）；已记录但指纹变化仍会报错
-                let client = try await SSHConnectionFactory.connect(
+                // 测试连接：新指纹自动信任（结果里展示指纹）；已记录但指纹变化仍会报错。
+                // 配置了跳板时按链测试（各跳走自身保存的凭据）。
+                let connection = try await SSHConnectionFactory.connect(
                     to: snapshot,
                     hostKeyCallback: { facts in
                         SharedKnownHosts.store.trust(
@@ -209,11 +270,12 @@ public struct HostEditView: View {
                         )
                         return true
                     },
+                    jumpHosts: jumpHosts,
                     overridePassword: password.isEmpty ? nil : password,
                     overridePassphrase: passphrase.isEmpty ? nil : passphrase
                 )
-                let output = try await client.executeCommand("echo ok")
-                try await client.close()
+                let output = try await connection.client.executeCommand("echo ok")
+                await connection.closeAll()
                 let ms = Int(Date().timeIntervalSince(started) * 1000)
                 let ok = String(buffer: output).trimmingCharacters(in: .whitespacesAndNewlines).contains("ok")
                 if ok {
@@ -229,6 +291,11 @@ public struct HostEditView: View {
     }
 
     private func save() {
+        // 跳板链环检测：成环拒绝保存（连接解析会死循环）
+        if jumpChainHasCycle() {
+            showingJumpCycleAlert = true
+            return
+        }
         if let host {
             host.alias = alias.isEmpty ? hostname : alias
             host.hostname = hostname
@@ -238,6 +305,7 @@ public struct HostEditView: View {
             host.authMethod = authMethod
             host.keyPath = authMethod == .key ? keyPath : nil
             host.notes = notes
+            host.jumpHostID = jumpHostID
             if !password.isEmpty, authMethod == .password {
                 try? KeychainStore.save(password, kind: .password, hostID: host.id)
             }
@@ -256,7 +324,8 @@ public struct HostEditView: View {
                 notes: notes,
                 proxyType: proxyType,
                 proxyHost: proxyType == .http ? proxyHost : nil,
-                proxyPort: proxyType == .http ? proxyPort : nil
+                proxyPort: proxyType == .http ? proxyPort : nil,
+                jumpHostID: jumpHostID
             )
             modelContext.insert(newHost)
             if authMethod == .password, !password.isEmpty {

@@ -8,6 +8,8 @@ struct MainWindowView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var hosts: [SSHHost]
 
+    @State private var showingQuickSwitcher = false
+
     var body: some View {
         NavigationSplitView {
             SidebarView()
@@ -20,7 +22,17 @@ struct MainWindowView: View {
         .frame(minWidth: 980, minHeight: 620)
         .hostKeyConfirmAlert(appState: appState)
         .onAppear {
+            // 主机目录提供者：连接时现查 SwiftData 解析跳板链（支持多窗口，重复注入无害）
+            appState.hostCatalogProvider = { [modelContext] in
+                (try? modelContext.fetch(FetchDescriptor<SSHHost>()))?.map(\.snapshot) ?? []
+            }
             UITestSupport.runIfNeeded(appState: appState, modelContext: modelContext)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .termHubQuickSwitch)) { _ in
+            showingQuickSwitcher = true
+        }
+        .sheet(isPresented: $showingQuickSwitcher) {
+            QuickSwitcherView()
         }
     }
 

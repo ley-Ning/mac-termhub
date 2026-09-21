@@ -48,6 +48,8 @@ public final class SSHHost {
     public var proxyTypeRaw: String?
     public var proxyHost: String?
     public var proxyPort: Int?
+    /// 经由哪台已保存主机做跳板（nil=直连）；新增可选字段属轻量迁移
+    public var jumpHostID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -63,7 +65,8 @@ public final class SSHHost {
         lastConnectedAt: Date? = nil,
         proxyType: HostProxyType = .none,
         proxyHost: String? = nil,
-        proxyPort: Int? = nil
+        proxyPort: Int? = nil,
+        jumpHostID: UUID? = nil
     ) {
         self.id = id
         self.alias = alias
@@ -79,6 +82,7 @@ public final class SSHHost {
         self.proxyTypeRaw = proxyType == .none ? nil : proxyType.rawValue
         self.proxyHost = proxyHost
         self.proxyPort = proxyPort
+        self.jumpHostID = jumpHostID
     }
 
     public var authMethod: HostAuthMethod {
@@ -115,7 +119,8 @@ public struct HostSnapshot: Identifiable, Hashable, Sendable {
         notes: String,
         proxyType: HostProxyType = .none,
         proxyHost: String? = nil,
-        proxyPort: Int? = nil
+        proxyPort: Int? = nil,
+        jumpHostID: UUID? = nil
     ) {
         self.id = id
         self.alias = alias
@@ -129,6 +134,7 @@ public struct HostSnapshot: Identifiable, Hashable, Sendable {
         self.proxyType = proxyType
         self.proxyHost = proxyHost
         self.proxyPort = proxyPort
+        self.jumpHostID = jumpHostID
     }
 
     public let id: UUID
@@ -143,6 +149,7 @@ public struct HostSnapshot: Identifiable, Hashable, Sendable {
     public var proxyType: HostProxyType
     public var proxyHost: String?
     public var proxyPort: Int?
+    public var jumpHostID: UUID?
 
     public var displayAddress: String {
         port == 22 ? hostname : "\(hostname):\(port)"
@@ -169,7 +176,8 @@ public extension SSHHost {
             notes: notes,
             proxyType: proxyType,
             proxyHost: proxyHost,
-            proxyPort: proxyPort
+            proxyPort: proxyPort,
+            jumpHostID: jumpHostID
         )
     }
 }

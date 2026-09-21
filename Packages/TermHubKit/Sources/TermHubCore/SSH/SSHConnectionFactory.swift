@@ -14,6 +14,7 @@ public enum SSHSetupError: LocalizedError {
     case hostKeyRejected(host: String)
     case hostKeyChanged(host: String, oldFingerprint: String, newFingerprint: String)
     case proxyTunnelFailed(proxy: String, detail: String)
+    case jumpConnectFailed(hop: String, detail: String)
 
     public var errorDescription: String? {
         switch self {
@@ -44,6 +45,28 @@ public enum SSHSetupError: LocalizedError {
             \(detail)
             请检查代理地址/端口及网络可达性。
             """
+        case .jumpConnectFailed(let hop, let detail):
+            return """
+            经由跳板机「\(hop)」建立通道失败。
+            \(detail)
+            请检查跳板机是否允许 TCP 转发（sshd_config 的 AllowTcpForwarding）、
+            跳板凭据是否正确、目标主机是否可达。
+            """
+        }
+    }
+}
+
+/// 连接结果：目标主机 client + 跳板链上的中间 client（供断开时整链关闭）
+public struct SSHConnection {
+    public let client: SSHClient
+    /// 顺序：第一跳在前。关闭时应在关闭 client 之后逆序关闭。
+    public let jumpClients: [SSHClient]
+
+    /// 关闭整条链（目标在前，跳板随后；失败忽略）
+    public func closeAll() async {
+        try? await client.close()
+        for jumpClient in jumpClients.reversed() {
+            try? await jumpClient.close()
         }
     }
 }
@@ -86,7 +109,63 @@ public enum SSHConnectionFactory {
     }
 
     /// 连接。hostKeyCallback 仅在首次遇到该主机指纹时被调用（UI 弹窗确认）。
+    /// jumpHosts：按顺序解析好的跳板链（不含目标；由调用侧查 SwiftData 传入，
+    /// 避免本层反依赖 SwiftData）。跳板链上每一跳独立做 TOFU 校验与认证。
     public static func connect(
+        to host: HostSnapshot,
+        hostKeyCallback: @escaping @Sendable (TOFUHostKeyValidator.HostKeyFacts) async -> Bool,
+        jumpHosts: [HostSnapshot] = [],
+        overridePassword: String? = nil,
+        overridePassphrase: String? = nil
+    ) async throws -> SSHConnection {
+        // 无跳板：保持原直连/HTTP 代理路径
+        guard let firstHop = jumpHosts.first else {
+            let client = try await connectSingleHop(
+                to: host,
+                hostKeyCallback: hostKeyCallback,
+                overridePassword: overridePassword,
+                overridePassphrase: overridePassphrase
+            )
+            return SSHConnection(client: client, jumpClients: [])
+        }
+
+        // 有跳板：先直连第一跳（第一跳自身仍可走 HTTP 代理），
+        // 之后在上一跳的连接上开 direct-tcpip 通道逐跳 SSH 握手到目标。
+        // 临时凭据（override*）只作用于目标主机；各跳板用自身保存的凭据。
+        var chain: [SSHClient] = []
+        var current = try await connectSingleHop(
+            to: firstHop,
+            hostKeyCallback: hostKeyCallback
+        )
+        chain.append(current)
+
+        do {
+            for hop in jumpHosts.dropFirst() {
+                current = try await jumpThrough(current, to: hop, hostKeyCallback: hostKeyCallback)
+                chain.append(current)
+            }
+            let target = try await jumpThrough(
+                current,
+                to: host,
+                hostKeyCallback: hostKeyCallback,
+                overridePassword: overridePassword,
+                overridePassphrase: overridePassphrase
+            )
+            return SSHConnection(client: target, jumpClients: chain)
+        } catch {
+            // 失败清理：目标未建立，逆序关闭已建立的跳板
+            for jumpClient in chain.reversed() {
+                try? await jumpClient.close()
+            }
+            let failedHop = jumpHosts.count > chain.count
+                ? jumpHosts[chain.count]          // 中断在 chain.count 号跳板上
+                : host                             // 跳板全通，目标握手失败
+            throw translateJumpError(error, at: failedHop)
+        }
+    }
+
+    /// 单跳直连（含 HTTP 代理分支），原 connect 的主体逻辑
+    private static func connectSingleHop(
         to host: HostSnapshot,
         hostKeyCallback: @escaping @Sendable (TOFUHostKeyValidator.HostKeyFacts) async -> Bool,
         overridePassword: String? = nil,
@@ -141,6 +220,53 @@ public enum SSHConnectionFactory {
             authenticationMethod: auth,
             hostKeyValidator: validator,
             reconnect: .never
+        )
+    }
+
+    /// 在已有连接上经 direct-tcpip 通道对下一台主机做 SSH 握手（Citadel 公开 jump API）
+    private static func jumpThrough(
+        _ client: SSHClient,
+        to hop: HostSnapshot,
+        hostKeyCallback: @escaping @Sendable (TOFUHostKeyValidator.HostKeyFacts) async -> Bool,
+        overridePassword: String? = nil,
+        overridePassphrase: String? = nil
+    ) async throws -> SSHClient {
+        let auth = try makeAuthentication(
+            for: hop,
+            overridePassword: overridePassword,
+            overridePassphrase: overridePassphrase
+        )
+        // 每跳独立的 TOFU 校验：指纹按各跳主机名分别记录
+        let (validator, delegate) = SSHHostKeyValidator.tofu(
+            store: SharedKnownHosts.store,
+            onUnknownKey: hostKeyCallback
+        )
+        delegate.currentHost = hop.hostname
+        delegate.currentPort = hop.port
+
+        let settings = SSHClientSettings(
+            host: hop.hostname,
+            port: hop.port,
+            authenticationMethod: { auth },
+            hostKeyValidator: validator
+        )
+        return try await client.jump(to: settings)
+    }
+
+    /// 跳板链错误转译：通道被拒多因跳板禁用 TCP 转发，给可读中文
+    private static func translateJumpError(_ error: Error, at hop: HostSnapshot) -> Error {
+        if case SSHClientError.channelCreationFailed = error {
+            return SSHSetupError.jumpConnectFailed(
+                hop: hop.alias.isEmpty ? hop.hostname : hop.alias,
+                detail: "跳板机拒绝了 TCP 转发通道（channelCreationFailed）。"
+            )
+        }
+        if let setup = error as? SSHSetupError {
+            return setup
+        }
+        return SSHSetupError.jumpConnectFailed(
+            hop: hop.alias.isEmpty ? hop.hostname : hop.alias,
+            detail: error.localizedDescription
         )
     }
 }

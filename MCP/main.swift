@@ -88,7 +88,7 @@ final class ConnectionPool {
         let client = try await SSHConnectionFactory.connect(to: snapshot) { facts in
             FileHandle.standardError.write(Data(("[termhub-mcp] 拒绝未知指纹 host=\(facts.host) fp=\(facts.fingerprint)\n").utf8))
             return false
-        }
+        }.client
         clients[alias] = client
         return client
     }
