@@ -23,6 +23,19 @@ public enum KeychainStore {
         "com.termhub.host.\(hostID.uuidString).\(kind.rawValue)"
     }
 
+    /// 新建条目时预授权的自家二进制（App / MCP / 冒烟，debug+release）。
+    /// 不做这一步，条目只信任创建它的那个二进制，其它二进制读取都会弹系统密码框。
+    private static var trustedApplicationPaths: [String] {
+        let repo = NSString(string: "~/WorkBuddy/TermHub").expandingTildeInPath
+        return [
+            "\(repo)/build/TermHub.app/Contents/MacOS/TermHub",
+            "\(repo)/.build/release/TermHubMCP",
+            "\(repo)/.build/debug/TermHubMCP",
+            "\(repo)/.build/release/TermHubSmoke",
+            "\(repo)/.build/debug/TermHubSmoke",
+        ]
+    }
+
     public static func save(_ secret: String, kind: SecretKind, hostID: UUID) throws {
         let service = service(for: kind, hostID: hostID)
         let data = Data(secret.utf8)
@@ -38,6 +51,22 @@ public enum KeychainStore {
             var addQuery = query
             addQuery[kSecValueData as String] = data
             addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+            // 预授权自家二进制：SecAccess 带受信应用列表，读取不再弹授权框
+            var trustedApps: [SecTrustedApplication] = []
+            for path in trustedApplicationPaths {
+                var app: SecTrustedApplication?
+                if SecTrustedApplicationCreateFromPath(path, &app) == errSecSuccess,
+                   let app {
+                    trustedApps.append(app)
+                }
+            }
+            if !trustedApps.isEmpty {
+                var access: SecAccess?
+                if SecAccessCreate(service as CFString, trustedApps as CFArray, &access) == errSecSuccess,
+                   let access {
+                    addQuery[kSecAttrAccess as String] = access
+                }
+            }
             let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
             guard addStatus == errSecSuccess else { throw KeychainError.unexpectedStatus(addStatus) }
         } else if updateStatus != errSecSuccess {
