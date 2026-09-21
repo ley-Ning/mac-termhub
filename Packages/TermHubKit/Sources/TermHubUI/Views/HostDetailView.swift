@@ -51,11 +51,14 @@ public struct HostDetailView: View {
                 HostEditView(host: host)
             }
             .overlay(alignment: .bottomTrailing) {
-                // 窄空间面板被收起时留一个快速恢复入口
-                if compact, session.activeTool == nil, session.ssh.phase == .connected {
+                // 窄空间面板不并排显示时，右下角常驻工具面板入口
+                // （无论 activeTool 是否已选——否则 compact 下菜单选了面板会无任何反馈）
+                if compact, session.ssh.phase == .connected {
                     Menu {
                         ForEach(HostSession.ToolPanel.allCases) { tool in
-                            Button(tool.label) { session.activeTool = tool }
+                            Button("\(session.activeTool == tool ? "✓ " : "")\(tool.label)") {
+                                session.activeTool = tool
+                            }
                         }
                     } label: {
                         Label("工具面板", systemImage: "sidebar.right")
