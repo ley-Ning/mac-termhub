@@ -105,13 +105,19 @@ public final class AppState {
     private var hostKeyHandler: (@Sendable (TOFUHostKeyValidator.HostKeyFacts) async -> Bool)?
 
     /// 主机目录提供者：连接时现查 SwiftData，解析跳板链用（由主窗口注入，
-    /// TermHubCore 不反依赖 SwiftData）
-    public var hostCatalogProvider: (() -> [HostSnapshot])?
+    /// 主机目录快照（MainWindowView 在渲染时更新；跳板链解析用它）。
+    /// 不用闭包即时 fetch：在 List 选中恢复等 SwiftUI 更新回调里同步查 SwiftData 会触发 trap 崩溃。
+    public private(set) var hostCatalog: [HostSnapshot] = []
+
+    public func updateHostCatalog(_ snapshots: [HostSnapshot]) {
+        hostCatalog = snapshots
+    }
 
     /// 沿 jumpHostID 解析跳板链（第一跳在前，不含目标）。
     /// 环/断链在途经处截断（表单保存处已做环校验，这里兜底防死循环）。
     public func resolveJumpChain(for snapshot: HostSnapshot) -> [HostSnapshot] {
-        guard let catalog = hostCatalogProvider?() else { return [] }
+        let catalog = hostCatalog
+        guard !catalog.isEmpty else { return [] }
         var byID: [UUID: HostSnapshot] = [:]
         for host in catalog { byID[host.id] = host }
 

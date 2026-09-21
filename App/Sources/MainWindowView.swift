@@ -22,11 +22,12 @@ struct MainWindowView: View {
         .frame(minWidth: 980, minHeight: 620)
         .hostKeyConfirmAlert(appState: appState)
         .onAppear {
-            // 主机目录提供者：连接时现查 SwiftData 解析跳板链（支持多窗口，重复注入无害）
-            appState.hostCatalogProvider = { [modelContext] in
-                (try? modelContext.fetch(FetchDescriptor<SSHHost>()))?.map(\.snapshot) ?? []
-            }
+            // 主机目录快照：渲染期更新缓存，供跳板链解析（不在选中回调里同步 fetch，防 SwiftData trap）
+            appState.updateHostCatalog(hosts.map(\.snapshot))
             UITestSupport.runIfNeeded(appState: appState, modelContext: modelContext)
+        }
+        .onChange(of: hosts.map(\.id)) { _, _ in
+            appState.updateHostCatalog(hosts.map(\.snapshot))
         }
         .onReceive(NotificationCenter.default.publisher(for: .termHubQuickSwitch)) { _ in
             showingQuickSwitcher = true
