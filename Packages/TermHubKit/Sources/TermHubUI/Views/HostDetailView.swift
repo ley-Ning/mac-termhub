@@ -21,26 +21,53 @@ public struct HostDetailView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            HSplitView {
-                TerminalWorkspace(hostSession: session)
-                    .frame(minWidth: 380, idealWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
-                if let tool = session.activeTool {
-                    toolPanel(tool)
-                        .frame(
-                            minWidth: 340,
-                            idealWidth: 440,
-                            maxWidth: 520,
-                            maxHeight: .infinity
-                        )
+        // 响应式：可用宽度不足时自动收起右侧工具面板（终端优先），并收纳头部按钮
+        GeometryReader { proxy in
+            let compact = proxy.size.width < 780
+            VStack(spacing: 0) {
+                header(compact: compact)
+                Divider()
+                HSplitView {
+                    TerminalWorkspace(hostSession: session)
+                        .frame(minWidth: 380, idealWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+                    if let tool = session.activeTool, !compact {
+                        toolPanel(tool)
+                            .frame(
+                                minWidth: 340,
+                                idealWidth: 440,
+                                maxWidth: 520,
+                                maxHeight: .infinity
+                            )
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .onChange(of: proxy.size.width) { _, newWidth in
+                if newWidth < 640, session.activeTool != nil {
+                    session.activeTool = nil
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .sheet(item: $editingHost) { host in
-            HostEditView(host: host)
+            .sheet(item: $editingHost) { host in
+                HostEditView(host: host)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                // 窄空间面板被收起时留一个快速恢复入口
+                if compact, session.activeTool == nil, session.ssh.phase == .connected {
+                    Menu {
+                        ForEach(HostSession.ToolPanel.allCases) { tool in
+                            Button(tool.label) { session.activeTool = tool }
+                        }
+                    } label: {
+                        Label("工具面板", systemImage: "sidebar.right")
+                            .font(.caption)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.bar, in: Capsule())
+                    }
+                    .menuStyle(.borderlessButton)
+                    .padding(10)
+                }
+            }
         }
     }
 
@@ -61,7 +88,7 @@ public struct HostDetailView: View {
         }
     }
 
-    private var header: some View {
+    private func header(compact: Bool) -> some View {
         HStack(spacing: 10) {
             // 只在失败时给出说明文字；常态保持干净（主机名看侧栏即可）
             if case .failed(let message) = session.ssh.phase {
@@ -114,22 +141,39 @@ public struct HostDetailView: View {
             Divider().frame(height: 16)
             // 会话设置：保活/自动重连/粘贴保护
             sessionSettingsMenu
-            // 工具面板开关：与终端并排显示，不是切换
-            ForEach(HostSession.ToolPanel.allCases) { tool in
-                Button {
-                    session.activeTool = session.activeTool == tool ? nil : tool
+            // 工具面板开关：与终端并排显示；窄空间收进单一菜单防溢出
+            if compact {
+                Menu {
+                    ForEach(HostSession.ToolPanel.allCases) { tool in
+                        Button("\(session.activeTool == tool ? "✓ " : "")\(tool.label)") {
+                            session.activeTool = session.activeTool == tool ? nil : tool
+                        }
+                    }
                 } label: {
-                    Image(systemName: tool.icon)
+                    Image(systemName: "sidebar.right")
                         .frame(width: 26, height: 22)
                 }
-                .buttonStyle(.borderless)
-                .background(
-                    session.activeTool == tool
-                        ? Color.accentColor.opacity(0.22)
-                        : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 6)
-                )
-                .help("\(tool.label)面板（与终端并排显示）")
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("工具面板（窄窗口收起，点开选择）")
+            } else {
+                ForEach(HostSession.ToolPanel.allCases) { tool in
+                    Button {
+                        session.activeTool = session.activeTool == tool ? nil : tool
+                    } label: {
+                        Image(systemName: tool.icon)
+                            .frame(width: 26, height: 22)
+                    }
+                    .buttonStyle(.borderless)
+                    .background(
+                        session.activeTool == tool
+                            ? Color.accentColor.opacity(0.22)
+                            : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+                    .help("\(tool.label)面板（与终端并排显示）")
+                }
             }
         }
         .padding(.horizontal)

@@ -139,6 +139,17 @@ public struct FilesTabPage: View {
                     renameTarget = sel
                 }
             }
+            // ⌘R 留给刷新；重命名走右键菜单/铅笔按钮
+            // 回车 = 进入目录 / 预览文件（用户最直觉的"打开"）
+            Button("打开") {
+                if let sel = selectedEntry {
+                    if sel.isDirectory {
+                        Task { await sftp.list(path: sel.path) }
+                    } else {
+                        previewEntry = sel
+                    }
+                }
+            }
             .keyboardShortcut(.return, modifiers: [])
             Button("预览") { if let sel = selectedEntry { previewEntry = sel } }
                 .keyboardShortcut("o", modifiers: .command)
@@ -165,12 +176,11 @@ public struct FilesTabPage: View {
             Button { Task { await sftp.goUp() } } label: { Image(systemName: "arrow.up") }
                 .help("上一级 (⌘↑)")
 
-            Text(sftp.currentPath)
-                .font(.system(size: 11, design: .monospaced))
-                .lineLimit(1)
-                .truncationMode(.head)
-                .help(sftp.currentPath)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // 面包屑：点任意层级直达（一行路径文本没法点）
+            breadcrumb(sftp.currentPath) { path in
+                Task { await sftp.list(path: path) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if sftp.isListing {
                 ProgressView().controlSize(.small)
@@ -214,6 +224,35 @@ public struct FilesTabPage: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .buttonStyle(.borderless)
+    }
+
+    /// 路径 → 可点击面包屑（点段跳到该前缀；最后一段加粗）
+    private func breadcrumb(_ path: String, action: @escaping (String) -> Void) -> some View {
+        HStack(spacing: 2) {
+            if path.isEmpty || path == "/" {
+                Button("/") { action("/") }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11, design: .monospaced))
+            } else {
+                Button("/") { action("/") }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11, design: .monospaced))
+                let parts = path.split(separator: "/").map(String.init)
+                ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
+                    let target = index == parts.count - 1
+                        ? path
+                        : "/" + parts[0 ... index].joined(separator: "/")
+                    Text("/").foregroundStyle(.tertiary)
+                        .font(.system(size: 11, design: .monospaced))
+                    Button(part) { action(target) }
+                        .buttonStyle(.link)
+                        .font(.system(size: 11, design: .monospaced))
+                        .fontWeight(index == parts.count - 1 ? .semibold : .regular)
+                }
+            }
+        }
+        .lineLimit(1)
+        .truncationMode(.tail)
     }
 
     private var selectedEntry: SFTPEntry? {
@@ -373,9 +412,10 @@ public struct FilesTabPage: View {
                     Image(systemName: "arrow.up")
                 }
                 .disabled(localPath.pathComponents.count <= 1)
-                Text(localPath.lastPathComponent.isEmpty ? "/" : localPath.lastPathComponent)
-                    .font(.system(size: 12, design: .monospaced))
-                    .lineLimit(1)
+                // 本地面包屑：可点层级直达
+                breadcrumb(localPath.path) { path in
+                    localPath = URL(fileURLWithPath: path)
+                }
                 Spacer()
                 Button {
                     showLocalNewFolder = true
@@ -410,8 +450,9 @@ public struct FilesTabPage: View {
                     Spacer()
                 }
                 .contentShape(Rectangle())
-                .onTapGesture(count: 2) {
+                .onTapGesture(count: isDir ? 1 : 2) {
                     if isDir {
+                        // 目录单击即进（导航高频动作不该要双击）
                         localPath = entryURL
                     } else {
                         // 双击本地文件 = 上传到远端当前目录

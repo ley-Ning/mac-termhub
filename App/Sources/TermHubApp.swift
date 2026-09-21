@@ -7,6 +7,8 @@ import TermHubUI
 struct TermHubApp: App {
     @State private var appState = AppState()
     @StateObject private var updater = UpdateService()
+    @StateObject private var theme = ThemeSettings.shared
+    @State private var showingSettings = false
 
     private let uiTest = ProcessInfo.processInfo.environment["TERMHUB_UITEST"] == "1"
 
@@ -33,6 +35,12 @@ struct TermHubApp: App {
                 .environment(appState)
                 .modelContainer(container)
                 .environmentObject(updater)
+                // 主题：外观模式 + 强调色（设置页即时生效）
+                .preferredColorScheme(theme.appearance.colorScheme)
+                .tint(theme.accentColor)
+                .sheet(isPresented: $showingSettings) {
+                    SettingsView()
+                }
                 .task {
                     // 启动后台静默检查更新（本地仓库存在时）
                     if !uiTest { await updater.checkForUpdates() }
@@ -60,6 +68,10 @@ struct TermHubApp: App {
             }
             // 热更新：检查 + 一键安装（拉代码 → 稳定签名重建 → 自动重启）
             CommandGroup(after: .appInfo) {
+                Button("设置…") {
+                    showingSettings = true
+                }
+                .keyboardShortcut(",")
                 Button("检查更新…") {
                     Task {
                         await updater.checkForUpdates()

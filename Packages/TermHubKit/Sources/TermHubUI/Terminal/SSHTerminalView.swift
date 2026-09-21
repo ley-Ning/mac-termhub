@@ -119,11 +119,17 @@ struct SSHTerminalView: NSViewRepresentable {
         let view = ProtectedTerminalView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
         view.autoresizingMask = [.width, .height]
         view.terminalDelegate = context.coordinator
-        view.configureNativeColors()
+        applyTerminalTheme(view)
         view.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         context.coordinator.terminalView = view
         terminal.attach { [weak view] bytes in
             view?.feed(byteArray: bytes)
+        }
+        // 主题热切换：设置页改配色后所有在用终端立即重着色
+        NotificationCenter.default.addObserver(
+            forName: ThemeSettings.terminalThemeChanged, object: nil, queue: .main
+        ) { [weak view] _ in
+            if let view { applyTerminalTheme(view) }
         }
         // 视图就绪后同步一次初始尺寸
         Task { @MainActor [weak view, weak terminal] in
@@ -134,6 +140,28 @@ struct SSHTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: TerminalView, context: Context) {}
+
+    /// 应用终端配色主题（前景/背景/ANSI 16 色）
+    @MainActor
+    private func applyTerminalTheme(_ view: TerminalView) {
+        let theme = ThemeSettings.shared.terminalTheme
+        func termColor(_ rgb: (Double, Double, Double)) -> SwiftTerm.Color {
+            SwiftTerm.Color(
+                red: UInt16(rgb.0 * 65535),
+                green: UInt16(rgb.1 * 65535),
+                blue: UInt16(rgb.2 * 65535)
+            )
+        }
+        view.setBackgroundColor(source: view.terminal, color: termColor(theme.background))
+        view.setForegroundColor(source: view.terminal, color: termColor(theme.foreground))
+        view.setCursorColor(
+            source: view.terminal,
+            color: termColor(theme.foreground),
+            textColor: termColor(theme.background)
+        )
+        // 16 色（8 正常 + 8 亮色）一次性安装，索引顺序即 ANSI 0-15
+        view.installColors(theme.ansi.map(termColor))
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(terminal: terminal)

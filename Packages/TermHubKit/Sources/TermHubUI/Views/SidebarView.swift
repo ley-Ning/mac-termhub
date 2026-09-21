@@ -14,6 +14,8 @@ public struct SidebarView: View {
     @StateObject private var latencyMonitor = LatencyMonitor()
 
     @State private var searchText = ""
+    /// 侧栏当前宽度（GeometryReader 注入；窄时隐藏延迟列防挤压）
+    @State private var sidebarWidth: CGFloat = 260
     @State private var editingHost: SSHHost?
     @State private var showingNewHost = false
 
@@ -57,7 +59,7 @@ public struct SidebarView: View {
                     // 搜索时无视折叠，保证结果可见
                     if !isCollapsed(group.name) {
                         ForEach(group.hosts) { host in
-                            SidebarRow(host: host, session: appState.sessions[host.id], latency: latencyMonitor.results[host.id])
+                            SidebarRow(host: host, session: appState.sessions[host.id], latency: latencyMonitor.results[host.id], showsLatency: sidebarWidth > 250)
                                 .tag(host.id)
                                 .contextMenu {
                                     Button("编辑…") { editingHost = host }
@@ -119,6 +121,12 @@ public struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.onAppear { sidebarWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, w in sidebarWidth = w }
+            }
+        )
         // 资产延迟监测：进入即测一轮，主机目录变化补测，60s 周期刷新
         .task {
             latencyMonitor.start()
@@ -262,13 +270,14 @@ private struct SidebarRow: View {
     let host: SSHHost
     let session: HostSession?
     let latency: LatencyMonitor.Probe?
+    let showsLatency: Bool
 
     public var body: some View {
         if let session {
             // 有会话：观察 HostSession，phase 变化经转发触发状态点刷新
-            SidebarLiveRow(host: host, session: session, latency: latency)
+            SidebarLiveRow(host: host, session: session, latency: latency, showsLatency: showsLatency)
         } else {
-            SidebarIdleRow(host: host, latency: latency)
+            SidebarIdleRow(host: host, latency: latency, showsLatency: showsLatency)
         }
     }
 }
@@ -277,29 +286,32 @@ private struct SidebarLiveRow: View {
     let host: SSHHost
     @ObservedObject var session: HostSession
     let latency: LatencyMonitor.Probe?
+    let showsLatency: Bool
 
     public var body: some View {
-        row(host: host, phase: session.ssh.phase, latency: latency)
+        row(host: host, phase: session.ssh.phase, latency: latency, showsLatency: showsLatency)
     }
 }
 
 private struct SidebarIdleRow: View {
     let host: SSHHost
     let latency: LatencyMonitor.Probe?
+    let showsLatency: Bool
 
     public var body: some View {
-        row(host: host, phase: nil, latency: latency)
+        row(host: host, phase: nil, latency: latency, showsLatency: showsLatency)
     }
 }
 
-private func row(host: SSHHost, phase: SSHSession.Phase?, latency: LatencyMonitor.Probe?) -> some View {
-    SidebarRowShell(host: host, phase: phase, latency: latency)
+private func row(host: SSHHost, phase: SSHSession.Phase?, latency: LatencyMonitor.Probe?, showsLatency: Bool) -> some View {
+    SidebarRowShell(host: host, phase: phase, latency: latency, showsLatency: showsLatency)
 }
 
 private struct SidebarRowShell: View {
     let host: SSHHost
     let phase: SSHSession.Phase?
     let latency: LatencyMonitor.Probe?
+    let showsLatency: Bool
 
     public var body: some View {
         HStack(spacing: 8) {
@@ -328,8 +340,8 @@ private struct SidebarRowShell: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            // 资产延迟（借鉴 HexHub）：TCP RTT，周期刷新
-            if let latency {
+            // 资产延迟（借鉴 HexHub）：TCP RTT，周期刷新；侧栏窄时隐藏防挤压
+            if let latency, showsLatency {
                 Text(latency.text)
                     .font(.system(size: 10, design: .monospaced))
                     .monospacedDigit()
