@@ -35,10 +35,45 @@ let rawArgs = Array(CommandLine.arguments.dropFirst())
 let wantsStats = rawArgs.contains("--stats")
 // 位置参数 = 去掉所有标志与"标志+值"对（--proxy h:p / --jump alias / --password x）
 var args = rawArgs.filter { $0 != "-v" && $0 != "--verbose" && $0 != "--stats" && $0 != "--password-stdin" }
-for flag in ["--proxy", "--jump", "--password", "--connect-only"] {
+for flag in ["--proxy", "--jump", "--password", "--connect-only", "--stats-service"] {
     if let i = args.firstIndex(of: flag), i + 1 < args.count {
         args.removeSubrange(i...i + 1)
     }
+}
+
+// --stats-service <host> [user] [keyPath]：走 GUI 同款 ServerStatsService（专用连接+轻重轮换）跑 7 轮
+// 验证：专用连接建立、轻轮磁盘沿用、第 5 轮 diskIO 重采样出现速率
+if let i = rawArgs.firstIndex(of: "--stats-service"), i + 1 < rawArgs.count {
+    let target = rawArgs[rawArgs.index(after: i)]
+    let user2 = i + 2 < rawArgs.count ? rawArgs[rawArgs.index(after: rawArgs.index(after: i))] : "root"
+    let key2 = i + 3 < rawArgs.count ? rawArgs[i + 3] : NSString(string: "~/.ssh/id_ed25519").expandingTildeInPath
+    await MainActor.run {
+        let session = SSHSession(host: HostSnapshot(
+            id: UUID(), alias: "statsvc", hostname: target, port: 22, username: user2,
+            authMethod: passwordOverride != nil ? .password : .key,
+            keyPath: passwordOverride != nil ? nil : key2,
+            groupName: "s", notes: ""
+        ))
+        session.open(hostKeyCallback: { facts in
+            SharedKnownHosts.store.trust(host: facts.host, port: facts.port,
+                                         fingerprintSHA256: facts.fingerprint, keyType: facts.keyType)
+            return true
+        })
+        let service = ServerStatsService(ssh: session)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4)) // 等连接建立
+            for round in 1...7 {
+                await service.sampleOnce()
+                let s = service.stats
+                let io = s.diskIO.first.map { String(format: "%.1fMB/s", $0.readBytesPerSec/1048576) } ?? "无"
+                print("轮\(round): CPU=\(s.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "—") 内存=\(Int(s.memPercent))% 磁盘=\(s.disks.count)挂载 diskIO=\(io)")
+                try? await Task.sleep(for: .seconds(1))
+            }
+            session.close()
+            exit(0)
+        }
+    }
+    while true { try? await Task.sleep(for: .seconds(3600)) }
 }
 
 // --seed：把 root@163（密钥认证，不涉及任何 Keychain 凭据）写入共享库

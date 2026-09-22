@@ -324,14 +324,23 @@ public final class ServerStatsService: ObservableObject {
                 : ServerStatsParser.lightCommand
             let client = try await statsClient()
             let output = String(buffer: try await client.executeCommand(command))
-            var result = ServerStatsParser.parse(output: output, previous: previous)
-            // 轻轮没有 DISK/DISKIO 分节：沿用上轮的磁盘占用与 I/O（不闪空）
+            let result = ServerStatsParser.parse(output: output, previous: previous)
+            var newStats = result.stats
+            var newSample = result.sample
+            // 轻轮没有 DISK/DISKIO 分节：沿用上轮的磁盘占用与 I/O（不闪空），
+            // 并把上轮磁盘计数透传给下一轮（否则重采样轮无差值可算，速率永远出不来）
             if !useHeavy {
-                if result.stats.disks.isEmpty { result.stats.disks = stats.disks }
-                if result.stats.diskIO.isEmpty { result.stats.diskIO = stats.diskIO }
+                if newStats.disks.isEmpty { newStats.disks = stats.disks }
+                if newStats.diskIO.isEmpty { newStats.diskIO = stats.diskIO }
+                if newSample.diskCounters.isEmpty, let prevDisk = previous?.diskCounters, !prevDisk.isEmpty {
+                    newSample = ServerStatsParser.PreviousSample(
+                        cpuJiffies: newSample.cpuJiffies, netBytes: newSample.netBytes,
+                        diskCounters: prevDisk, at: newSample.at
+                    )
+                }
             }
-            previous = result.sample
-            stats = result.stats
+            previous = newSample
+            stats = newStats
             lastError = nil
 
             if let cpu = result.stats.cpuPercent {
