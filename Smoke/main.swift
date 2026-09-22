@@ -250,10 +250,11 @@ if args.contains("--security-audit") {
 
 // --sftp-list <host> <path> [user] [keyPath]：列目录条数+样本（诊断"文件不全"）
 // --connect-only <host> [user] [keyPath]：纯连接计时（握手+认证，不做任何采样）
-if let i = rawArgs.firstIndex(of: "--connect-only"), i + 1 < rawArgs.count {
-    let target = rawArgs[rawArgs.index(after: i)]
-    let user2 = i + 2 < rawArgs.count ? rawArgs[rawArgs.index(after: rawArgs.index(after: i))] : "root"
-    let key2 = i + 3 < rawArgs.count ? rawArgs[i + 3] : NSString(string: "~/.ssh/id_ed25519").expandingTildeInPath
+if rawArgs.contains("--connect-only"), args.count >= 1 {
+    // 位置参数（已摘除全部标志对）：args[0]=host [1]=user [2]=keyPath
+    let target = args[0]
+    let user2 = args.count > 1 ? args[1] : "root"
+    let key2 = args.count > 2 ? args[2] : NSString(string: "~/.ssh/id_ed25519").expandingTildeInPath
     let t0 = Date()
     do {
         let conn = try await SSHConnectionFactory.connect(
