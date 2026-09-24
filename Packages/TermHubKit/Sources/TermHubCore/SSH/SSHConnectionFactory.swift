@@ -253,13 +253,17 @@ public enum SSHConnectionFactory {
                 }
                 .connectTimeout(.seconds(20))
 
+            let dbg = ProcessInfo.processInfo.environment["TERMHUB_CONN_DEBUG"] == "1"
+            let t0 = Date()
             let tunnel = try await bootstrap.connect(host: proxyHost, port: proxyPort).get()
+            if dbg { FileHandle.standardError.write(Data("[conn] tcp+proxy handshake: \(Date().timeIntervalSince(t0))s\n".utf8)) }
             do {
                 try await ready.futureResult.get()
             } catch {
                 try? await tunnel.close()
                 throw error
             }
+            if dbg { FileHandle.standardError.write(Data("[conn] CONNECT tunnel ready: \(Date().timeIntervalSince(t0))s\n".utf8)) }
 
             let settings = SSHClientSettings(
                 host: host.hostname,
@@ -267,9 +271,14 @@ public enum SSHConnectionFactory {
                 authenticationMethod: { auth },
                 hostKeyValidator: validator
             )
-            return try await SSHClient.connect(on: tunnel, settings: settings)
+            let client = try await SSHClient.connect(on: tunnel, settings: settings)
+            if dbg { FileHandle.standardError.write(Data("[conn] ssh kex+auth done: \(Date().timeIntervalSince(t0))s\n".utf8)) }
+            return client
         }
 
+        let dbg2 = ProcessInfo.processInfo.environment["TERMHUB_CONN_DEBUG"] == "1"
+        let t02 = Date()
+        defer { if dbg2 { FileHandle.standardError.write(Data("[conn] direct connect done: \(Date().timeIntervalSince(t02))s\n".utf8)) } }
         return try await SSHClient.connect(
             host: host.hostname,
             port: host.port,

@@ -26,6 +26,8 @@ public struct HostEditView: View {
     @State private var jumpHostID: UUID?
     /// 跳板链成环时的提示
     @State private var showingJumpCycleAlert = false
+    /// 钥匙串保存失败提示（不再静默——用户以为存上了实际没存）
+    @State private var keychainSaveError: String?
 
     @State private var testState: TestState = .idle
 
@@ -198,6 +200,14 @@ public struct HostEditView: View {
         }
         .frame(width: 520, height: 560)
         .onAppear(perform: load)
+        .alert("密码保存失败", isPresented: Binding(
+            get: { keychainSaveError != nil },
+            set: { if !$0 { keychainSaveError = nil } }
+        )) {
+            Button("知道了", role: .cancel) { keychainSaveError = nil }
+        } message: {
+            Text("钥匙串写入失败：\(keychainSaveError ?? "")\n主机已保存但密码没有——请解锁登录钥匙串后重试，否则连接会提示未保存密码。")
+        }
         .alert("跳板链成环", isPresented: $showingJumpCycleAlert) {
             Button("返回修改", role: .cancel) {}
         } message: {
@@ -307,10 +317,12 @@ public struct HostEditView: View {
             host.notes = notes
             host.jumpHostID = jumpHostID
             if !password.isEmpty, authMethod == .password {
-                try? KeychainStore.save(password, kind: .password, hostID: host.id)
+                do { try KeychainStore.save(password, kind: .password, hostID: host.id) }
+                catch { keychainSaveError = error.localizedDescription; return }
             }
             if !passphrase.isEmpty, authMethod == .key {
-                try? KeychainStore.save(passphrase, kind: .passphrase, hostID: host.id)
+                do { try KeychainStore.save(passphrase, kind: .passphrase, hostID: host.id) }
+                catch { keychainSaveError = error.localizedDescription; return }
             }
         } else {
             let newHost = SSHHost(
@@ -329,10 +341,12 @@ public struct HostEditView: View {
             )
             modelContext.insert(newHost)
             if authMethod == .password, !password.isEmpty {
-                try? KeychainStore.save(password, kind: .password, hostID: newHost.id)
+                do { try KeychainStore.save(password, kind: .password, hostID: newHost.id) }
+                catch { keychainSaveError = error.localizedDescription; return }
             }
             if authMethod == .key, !passphrase.isEmpty {
-                try? KeychainStore.save(passphrase, kind: .passphrase, hostID: newHost.id)
+                do { try KeychainStore.save(passphrase, kind: .passphrase, hostID: newHost.id) }
+                catch { keychainSaveError = error.localizedDescription; return }
             }
         }
 

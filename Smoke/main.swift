@@ -35,7 +35,7 @@ let rawArgs = Array(CommandLine.arguments.dropFirst())
 let wantsStats = rawArgs.contains("--stats")
 // 位置参数 = 去掉所有标志与"标志+值"对（--proxy h:p / --jump alias / --password x）
 var args = rawArgs.filter { $0 != "-v" && $0 != "--verbose" && $0 != "--stats" && $0 != "--password-stdin" }
-for flag in ["--proxy", "--jump", "--password", "--connect-only", "--stats-service"] {
+for flag in ["--proxy", "--jump", "--password", "--stats-service"] {
     if let i = args.firstIndex(of: flag), i + 1 < args.count {
         args.removeSubrange(i...i + 1)
     }
@@ -74,6 +74,35 @@ if let i = rawArgs.firstIndex(of: "--stats-service"), i + 1 < rawArgs.count {
         }
     }
     while true { try? await Task.sleep(for: .seconds(3600)) }
+}
+
+// --alias <别名> --connect-only：GUI 同构连接计时（库内主机的真实 UUID→Keychain 凭据+代理配置）
+if let ai = rawArgs.firstIndex(of: "--alias"), ai + 1 < rawArgs.count, rawArgs.contains("--connect-only") {
+    let alias = rawArgs[rawArgs.index(after: ai)]
+    do {
+        let container = try AppStorage.makeSharedContainer()
+        let context = ModelContext(container)
+        let all = try context.fetch(FetchDescriptor<SSHHost>())
+        guard let host = all.first(where: { $0.alias == alias }) else {
+            print("❌ 库中无别名 \(alias)"); exit(2)
+        }
+        let snap = host.snapshot
+        let t0 = Date()  // 计时从快照就绪后开始（之前把 SwiftData 容器打开也算进去了——那是测试工具开销）
+        let conn = try await SSHConnectionFactory.connect(
+            to: snap,
+            hostKeyCallback: { facts in
+                SharedKnownHosts.store.trust(host: facts.host, port: facts.port,
+                                             fingerprintSHA256: facts.fingerprint, keyType: facts.keyType)
+                return true
+            }
+        )
+        try? await conn.client.close()
+        print(String(format: "CONNECT %.2fs [%@] %@ success", Date().timeIntervalSince(t0), alias, snap.displayAddress))
+        exit(0)
+    } catch {
+        print(String(format: "CONNECT failed [%@]: %@", alias, error.localizedDescription))
+        exit(1)
+    }
 }
 
 // --seed：把 root@163（密钥认证，不涉及任何 Keychain 凭据）写入共享库
@@ -250,11 +279,11 @@ if args.contains("--security-audit") {
 
 // --sftp-list <host> <path> [user] [keyPath]：列目录条数+样本（诊断"文件不全"）
 // --connect-only <host> [user] [keyPath]：纯连接计时（握手+认证，不做任何采样）
-if rawArgs.contains("--connect-only"), args.count >= 1 {
-    // 位置参数（已摘除全部标志对）：args[0]=host [1]=user [2]=keyPath
-    let target = args[0]
-    let user2 = args.count > 1 ? args[1] : "root"
-    let key2 = args.count > 2 ? args[2] : NSString(string: "~/.ssh/id_ed25519").expandingTildeInPath
+if let ci = rawArgs.firstIndex(of: "--connect-only"), ci + 1 < rawArgs.count, !rawArgs.contains("--alias") {
+    // host 必须紧跟 --connect-only（其余选项放前面）；--alias 模式见下
+    let target = rawArgs[rawArgs.index(after: ci)]
+    let user2 = ci + 2 < rawArgs.count && !rawArgs[ci + 2].hasPrefix("--") ? rawArgs[ci + 2] : "root"
+    let key2 = ci + 3 < rawArgs.count && !rawArgs[ci + 3].hasPrefix("--") ? rawArgs[ci + 3] : NSString(string: "~/.ssh/id_ed25519").expandingTildeInPath
     let t0 = Date()
     do {
         let conn = try await SSHConnectionFactory.connect(
