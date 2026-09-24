@@ -5,6 +5,7 @@ import TermHubCore
 /// 侧边栏：按分组展示主机，搜索、新增、右键编辑/复制/删除
 public struct SidebarView: View {
     @Environment(AppState.self) private var appState
+    @EnvironmentObject private var vaultGateway: VaultGateway
     @Environment(\.modelContext) private var modelContext
     @Query(sort: [SortDescriptor(\SSHHost.groupName), SortDescriptor(\SSHHost.alias)]) 
     private var hosts: [SSHHost]
@@ -59,30 +60,7 @@ public struct SidebarView: View {
                     // 搜索时无视折叠，保证结果可见
                     if !isCollapsed(group.name) {
                         ForEach(group.hosts) { host in
-                            SidebarRow(host: host, session: appState.sessions[host.id], latency: latencyMonitor.results[host.id], showsLatency: sidebarWidth > 250)
-                                .tag(host.id)
-                                .contextMenu {
-                                    Button("编辑…") { editingHost = host }
-                                    Button("连接") { appState.openSession(for: host.snapshot) }
-                                    if grouped.count > 1 {
-                                        Menu("移动到分组") {
-                                            ForEach(grouped.map(\.name), id: \.self) { target in
-                                                if target != group.name {
-                                                    Button(target) { move(host, toGroup: target) }
-                                                }
-                                            }
-                                            Divider()
-                                            Button("新建分组并移入…") {
-                                                newGroupText = ""
-                                                newGroupHost = host
-                                            }
-                                        }
-                                    }
-                                    Divider()
-                                    Button("复制主机") { duplicate(host) }
-                                    Divider()
-                                    Button("删除…", role: .destructive) { delete(host) }
-                                }
+                            hostRow(host, groupName: group.name)
                         }
                     }
                 } header: {
@@ -203,6 +181,42 @@ public struct SidebarView: View {
         searchText.isEmpty ? collapsedGroups.contains(name) : false
     }
 
+    /// 单台主机的侧栏行（抽独立方法防 ViewBuilder 类型检查超时）
+    private func hostRow(_ host: SSHHost, groupName: String) -> some View {
+        let needsPassword = host.authMethod == .password
+            && !vaultGateway.hasCredential(hostID: host.id, kind: .password)
+        return SidebarRow(
+            host: host,
+            session: appState.sessions[host.id],
+            latency: latencyMonitor.results[host.id],
+            showsLatency: sidebarWidth > 250,
+            needsPassword: needsPassword
+        )
+        .tag(host.id)
+        .contextMenu {
+            Button("编辑…") { editingHost = host }
+            Button("连接") { appState.openSession(for: host.snapshot) }
+            if grouped.count > 1 {
+                Menu("移动到分组") {
+                    ForEach(grouped.map(\.name), id: \.self) { target in
+                        if target != groupName {
+                            Button(target) { move(host, toGroup: target) }
+                        }
+                    }
+                    Divider()
+                    Button("新建分组并移入…") {
+                        newGroupText = ""
+                        newGroupHost = host
+                    }
+                }
+            }
+            Divider()
+            Button("复制主机") { duplicate(host) }
+            Divider()
+            Button("删除…", role: .destructive) { delete(host) }
+        }
+    }
+
     private func toggleGroup(_ name: String) {
         if collapsedGroups.contains(name) {
             collapsedGroups.remove(name)
@@ -261,7 +275,7 @@ public struct SidebarView: View {
 
     private func delete(_ host: SSHHost) {
         appState.closeSession(hostID: host.id)
-        KeychainStore.deleteAllSecrets(hostID: host.id)
+        vaultGateway.deleteHost(host.id)
         modelContext.delete(host)
     }
 }
@@ -271,13 +285,14 @@ private struct SidebarRow: View {
     let session: HostSession?
     let latency: LatencyMonitor.Probe?
     let showsLatency: Bool
+    let needsPassword: Bool
 
     public var body: some View {
         if let session {
             // 有会话：观察 HostSession，phase 变化经转发触发状态点刷新
-            SidebarLiveRow(host: host, session: session, latency: latency, showsLatency: showsLatency)
+            SidebarLiveRow(host: host, session: session, latency: latency, showsLatency: showsLatency, needsPassword: needsPassword)
         } else {
-            SidebarIdleRow(host: host, latency: latency, showsLatency: showsLatency)
+            SidebarIdleRow(host: host, latency: latency, showsLatency: showsLatency, needsPassword: needsPassword)
         }
     }
 }
@@ -287,9 +302,10 @@ private struct SidebarLiveRow: View {
     @ObservedObject var session: HostSession
     let latency: LatencyMonitor.Probe?
     let showsLatency: Bool
+    let needsPassword: Bool
 
     public var body: some View {
-        row(host: host, phase: session.ssh.phase, latency: latency, showsLatency: showsLatency)
+        row(host: host, phase: session.ssh.phase, latency: latency, showsLatency: showsLatency, needsPassword: needsPassword)
     }
 }
 
@@ -297,14 +313,15 @@ private struct SidebarIdleRow: View {
     let host: SSHHost
     let latency: LatencyMonitor.Probe?
     let showsLatency: Bool
+    let needsPassword: Bool
 
     public var body: some View {
-        row(host: host, phase: nil, latency: latency, showsLatency: showsLatency)
+        row(host: host, phase: nil, latency: latency, showsLatency: showsLatency, needsPassword: needsPassword)
     }
 }
 
-private func row(host: SSHHost, phase: SSHSession.Phase?, latency: LatencyMonitor.Probe?, showsLatency: Bool) -> some View {
-    SidebarRowShell(host: host, phase: phase, latency: latency, showsLatency: showsLatency)
+private func row(host: SSHHost, phase: SSHSession.Phase?, latency: LatencyMonitor.Probe?, showsLatency: Bool, needsPassword: Bool) -> some View {
+    SidebarRowShell(host: host, phase: phase, latency: latency, showsLatency: showsLatency, needsPassword: needsPassword)
 }
 
 private struct SidebarRowShell: View {
@@ -312,6 +329,7 @@ private struct SidebarRowShell: View {
     let phase: SSHSession.Phase?
     let latency: LatencyMonitor.Probe?
     let showsLatency: Bool
+    let needsPassword: Bool
 
     public var body: some View {
         HStack(spacing: 8) {
@@ -352,8 +370,7 @@ private struct SidebarRowShell: View {
                           : "TCP 连接往返延迟（约 60 秒刷新一次；代理主机测代理入口）")
             }
             // 密码认证但未存密码（迁移导入）：给出待补密码标记
-            if host.authMethod == .password,
-               KeychainStore.read(kind: .password, hostID: host.id) == nil {
+            if needsPassword {
                 Image(systemName: "key.slash")
                     .font(.caption)
                     .foregroundStyle(.orange)

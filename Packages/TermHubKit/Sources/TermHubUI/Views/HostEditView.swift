@@ -5,6 +5,7 @@ import TermHubCore
 /// 新增/编辑主机表单 + 测试连接
 public struct HostEditView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var vault: VaultGateway
     @Environment(\.dismiss) private var dismiss
     @Query private var allHosts: [SSHHost]
 
@@ -40,12 +41,12 @@ public struct HostEditView: View {
 
     private var hasSavedPassword: Bool {
         guard let host else { return false }
-        return KeychainStore.read(kind: .password, hostID: host.id) != nil
+        return vault.hasCredential(hostID: host.id, kind: .password)
     }
 
     private var hasSavedPassphrase: Bool {
         guard let host else { return false }
-        return KeychainStore.read(kind: .passphrase, hostID: host.id) != nil
+        return vault.hasCredential(hostID: host.id, kind: .passphrase)
     }
 
     /// 跳板候选：其余已保存主机（不含自己）
@@ -200,7 +201,7 @@ public struct HostEditView: View {
         }
         .frame(width: 520, height: 560)
         .onAppear(perform: load)
-        .alert("密码保存失败", isPresented: Binding(
+        .alert("凭据保存失败", isPresented: Binding(
             get: { keychainSaveError != nil },
             set: { if !$0 { keychainSaveError = nil } }
         )) {
@@ -317,11 +318,11 @@ public struct HostEditView: View {
             host.notes = notes
             host.jumpHostID = jumpHostID
             if !password.isEmpty, authMethod == .password {
-                do { try KeychainStore.save(password, kind: .password, hostID: host.id) }
+                do { try vault.save(password, hostID: host.id, kind: .password) }
                 catch { keychainSaveError = error.localizedDescription; return }
             }
             if !passphrase.isEmpty, authMethod == .key {
-                do { try KeychainStore.save(passphrase, kind: .passphrase, hostID: host.id) }
+                do { try vault.save(passphrase, hostID: host.id, kind: .passphrase) }
                 catch { keychainSaveError = error.localizedDescription; return }
             }
         } else {
@@ -341,11 +342,11 @@ public struct HostEditView: View {
             )
             modelContext.insert(newHost)
             if authMethod == .password, !password.isEmpty {
-                do { try KeychainStore.save(password, kind: .password, hostID: newHost.id) }
+                do { try vault.save(password, hostID: newHost.id, kind: .password) }
                 catch { keychainSaveError = error.localizedDescription; return }
             }
             if authMethod == .key, !passphrase.isEmpty {
-                do { try KeychainStore.save(passphrase, kind: .passphrase, hostID: newHost.id) }
+                do { try vault.save(passphrase, hostID: newHost.id, kind: .passphrase) }
                 catch { keychainSaveError = error.localizedDescription; return }
             }
         }

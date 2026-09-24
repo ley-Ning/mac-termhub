@@ -5,6 +5,7 @@ import TermHubCore
 /// 详情区：终端主工作区 + 右侧可开关工具面板（容器/文件/资源）
 public struct HostDetailView: View {
     @Environment(AppState.self) private var appState
+    @EnvironmentObject private var vaultGateway: VaultGateway
     @Environment(\.modelContext) private var modelContext
     @ObservedObject var session: HostSession
 
@@ -17,7 +18,7 @@ public struct HostDetailView: View {
     /// 密码认证但钥匙串里没有密码（如从 HexHub 迁移、密码无法导出的主机）
     private var needsPassword: Bool {
         session.ssh.host.authMethod == .password
-            && KeychainStore.read(kind: .password, hostID: session.ssh.host.id) == nil
+            && vaultGateway.hasCredential(hostID: session.ssh.host.id, kind: .password) == false
     }
 
     public var body: some View {

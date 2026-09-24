@@ -33,7 +33,7 @@ public enum SSHSetupError: LocalizedError {
         case .notConnected:
             return "会话未连接，请先连接主机"
         case .missingPassword:
-            return "未保存密码，请先在主机编辑里填写"
+            return "凭据不可用：凭据库未解锁，或该主机尚未录入密码（编辑主机填写，保存即入加密库）"
         case .missingKeyPath:
             return "未设置私钥路径"
         case .keyFileUnreadable(let path):
@@ -93,7 +93,7 @@ public enum SSHConnectionFactory {
     ) throws -> SSHAuthenticationMethod {
         switch host.authMethod {
         case .password:
-            let password = overridePassword ?? KeychainStore.read(kind: .password, hostID: host.id)
+            let password = overridePassword ?? CredentialBridge.provider?(host.id, .password)
             guard let password, !password.isEmpty else {
                 throw SSHSetupError.missingPassword
             }
@@ -106,7 +106,7 @@ public enum SSHConnectionFactory {
             guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
                 throw SSHSetupError.keyFileUnreadable(path)
             }
-            let stored = KeychainStore.read(kind: .passphrase, hostID: host.id)
+            let stored = CredentialBridge.provider?(host.id, .passphrase)
             let passphraseData = (overridePassphrase ?? stored).map { Data($0.utf8) }
 
             // OpenSSH 新格式（含 ed25519）优先，其次 PEM RSA
@@ -134,14 +134,6 @@ public enum SSHConnectionFactory {
         overridePassword: String? = nil,
         overridePassphrase: String? = nil
     ) async throws -> SSHConnection {
-        // 密码认证且非表单临时密码：先探测钥匙串锁定状态——
-        // 锁定时快速失败给明确指引，而不是每台主机的读取各自挂起连环弹系统解锁框
-        if host.authMethod == .password, overridePassword == nil {
-            let unlocked = await KeychainStore.probeUnlocked()
-            if !unlocked {
-                throw SSHSetupError.keychainLocked
-            }
-        }
         return try await withConnectTimeout(Self.connectTimeout) {
             try await connectUnprotected(
                 to: host, hostKeyCallback: hostKeyCallback, jumpHosts: jumpHosts,

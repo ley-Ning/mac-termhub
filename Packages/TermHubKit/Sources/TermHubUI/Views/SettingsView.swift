@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import TermHubCore
 
+
 /// 设置：外观模式 / 强调色 / 终端配色 / 语言（即时生效，UserDefaults 持久化）
 public struct SettingsView: View {
     @ObservedObject private var theme = ThemeSettings.shared
@@ -14,6 +15,7 @@ public struct SettingsView: View {
             appearanceTab.tabItem { Label("外观", systemImage: "paintbrush") }
             terminalTab.tabItem { Label("终端", systemImage: "terminal") }
             sessionTab.tabItem { Label("会话", systemImage: "clock.arrow.circlepath") }
+            securityTab.tabItem { Label("安全", systemImage: "lock.shield") }
         }
         .frame(width: 460, height: 420)
     }
@@ -117,6 +119,58 @@ public struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(.top, -8)
+    }
+
+    @EnvironmentObject private var vaultGateway: VaultGateway
+    @State private var showingChangePassword = false
+    @State private var oldPassword = ""
+    @State private var newPassword1 = ""
+    @State private var newPassword2 = ""
+
+    private var securityTab: some View {
+        Form {
+            Section("凭据库") {
+                Label("SSH 密码保存在本机加密文件中，仅主密码可解密", systemImage: "lock.shield")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("修改主密码…") { showingChangePassword = true }
+                Button("立即锁定（关闭全部连接）", role: .destructive) {
+                    vaultGateway.lock()
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding(.top, -8)
+        .sheet(isPresented: $showingChangePassword) {
+            VStack(spacing: 12) {
+                Text("修改主密码").font(.headline)
+                SecureField("当前主密码", text: $oldPassword).frame(width: 260)
+                SecureField("新主密码（≥6 位）", text: $newPassword1).frame(width: 260)
+                SecureField("再次输入新主密码", text: $newPassword2).frame(width: 260)
+                if let error = vaultGateway.lastError {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
+                HStack {
+                    Button("取消", role: .cancel) {
+                        showingChangePassword = false
+                        oldPassword = ""; newPassword1 = ""; newPassword2 = ""
+                    }
+                    Spacer()
+                    Button("确认修改") {
+                        guard vaultGateway.unlock(masterPassword: oldPassword),
+                              newPassword1.count >= 6, newPassword1 == newPassword2 else { return }
+                        if vaultGateway.changeMasterPassword(to: newPassword1) {
+                            showingChangePassword = false
+                            oldPassword = ""; newPassword1 = ""; newPassword2 = ""
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(oldPassword.isEmpty || newPassword1.count < 6 || newPassword1 != newPassword2)
+                }
+            }
+            .padding(24)
+            .frame(width: 360)
+        }
     }
 
     private var sessionTab: some View {

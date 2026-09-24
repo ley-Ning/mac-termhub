@@ -31,30 +31,14 @@ cp App/Resources/Icon.icns "${APP_DIR}/Contents/Resources/Icon.icns"
 # 多语言资源（key=中文原文的英文映射表；zh-Hans 为开发语言占位）
 cp -R App/Resources/en.lproj App/Resources/zh-Hans.lproj "${APP_DIR}/Contents/Resources/" 2>/dev/null || true
 
-# 稳定签名身份：自签名 "TermHub Dev"（导入登录钥匙串后长期不变）。
-# ad-hoc 签名每次编译都变，macOS 钥匙串 ACL 跟着签名走，会导致每次读密码都弹系统密码框；
-# 稳定身份下"始终允许"一次即永久生效。
-# TERMHUB_SIGN=adhoc 可跳过稳定签名（钥匙串锁定时 codesign 取私钥会无限挂起，用此开关快速出包）。
-if [[ "${TERMHUB_SIGN:-}" == "adhoc" ]]; then
-  echo "==> ad-hoc 签名（TERMHUB_SIGN=adhoc 快速模式；钥匙串解锁后去掉该变量恢复稳定签名）"
-  codesign --force --sign - "$APP_DIR"
+# 普通构建不查询登录钥匙串，也不要求 macOS 密码。发布者如需证书签名，
+# 须主动提供 TERMHUB_SIGN_IDENTITY；证书/私钥的访问仅属于该显式发布操作。
+if [[ -n "${TERMHUB_SIGN_IDENTITY:-}" ]]; then
+  echo "==> 使用显式指定的发布签名身份"
+  codesign --force --sign "$TERMHUB_SIGN_IDENTITY" "$APP_DIR"
 else
-  IDENTITY="$(security find-identity 2>/dev/null | grep -o 'TermHub Dev' | head -1 || true)"
-sign_with_identity() {
-  codesign --force --sign "$IDENTITY" "$1" 2>/dev/null
-}
-if [[ -n "$IDENTITY" ]] && sign_with_identity "$APP_DIR"; then
-  echo "==> codesign（稳定身份：$IDENTITY）"
-  # MCP / 冒烟二进制也读钥匙串，同样用稳定身份（存在才签）
-  for bin in TermHubMCP TermHubSmoke; do
-    if [[ -f "${BUILD_DIR}/release/${bin}" ]]; then
-      sign_with_identity "${BUILD_DIR}/release/${bin}" || true
-    fi
-  done
-else
-  echo "==> ad-hoc 签名（稳定身份不可用：钥匙串可能已锁，解锁登录钥匙串后自动恢复）"
+  echo "==> ad-hoc 签名（无需访问登录钥匙串）"
   codesign --force --sign - "$APP_DIR"
-fi
 fi
 
 echo "==> 完成：${APP_DIR}"

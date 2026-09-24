@@ -62,6 +62,12 @@ let package = Package(
             ],
             path: "MCP",
             swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "TermHubCoreTests",
+            dependencies: [.target(name: "TermHubCore")],
+            path: "Tests/TermHubCoreTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
 )

@@ -76,6 +76,29 @@ if let i = rawArgs.firstIndex(of: "--stats-service"), i + 1 < rawArgs.count {
     while true { try? await Task.sleep(for: .seconds(3600)) }
 }
 
+// --vault-put <UUID> <password|passphrase>：向加密库写入单条凭据（密码经 stdin；本地维护工具）
+if let i = rawArgs.firstIndex(of: "--vault-put"), i + 2 < rawArgs.count {
+    let hostUUID = UUID(uuidString: rawArgs[i + 1]) ?? UUID()
+    let kindRaw = rawArgs[i + 2]
+    let kind: CredentialVault.Kind = kindRaw == "passphrase" ? .passphrase : .password
+    guard let master = ProcessInfo.processInfo.environment["TERMHUB_VAULT_MASTER"], !master.isEmpty else {
+        FileHandle.standardError.write(Data("需要 TERMHUB_VAULT_MASTER 环境变量（本地维护场景）\n".utf8)); exit(2)
+    }
+    do {
+        let secret = String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !secret.isEmpty else { FileHandle.standardError.write(Data("stdin 无密码\n".utf8)); exit(2) }
+        let vault = CredentialVault.fileExists()
+            ? try CredentialVault.unlock(masterPassword: master)
+            : try CredentialVault.create(masterPassword: master)
+        try vault.save(secret, hostID: hostUUID, kind: kind)
+        print("✅ vault: \(kind.label) 已写入主机 \(hostUUID.uuidString)（库 hosts=\(vault.hostCount)）")
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("❌ \(error.localizedDescription)\n".utf8)); exit(1)
+    }
+}
+
 // --alias <别名> --connect-only：GUI 同构连接计时（库内主机的真实 UUID→Keychain 凭据+代理配置）
 if let ai = rawArgs.firstIndex(of: "--alias"), ai + 1 < rawArgs.count, rawArgs.contains("--connect-only") {
     let alias = rawArgs[rawArgs.index(after: ai)]
@@ -157,11 +180,27 @@ if let importIndex = args.firstIndex(of: "--import"), importIndex + 1 < args.cou
     }
     do {
         let pathArg = args[args.index(after: importIndex)]
+        var importVault: CredentialVault?
         let data: Data
         if pathArg == "-" {
+            // stdin 被 JSON 占用时主密码走环境变量（本地维护场景可接受；设计红线针对 MCP/服务端）
+            if let master = ProcessInfo.processInfo.environment["TERMHUB_VAULT_MASTER"], !master.isEmpty {
+                importVault = CredentialVault.fileExists()
+                    ? try CredentialVault.unlock(masterPassword: master)
+                    : try CredentialVault.create(masterPassword: master)
+            }
             data = FileHandle.standardInput.readDataToEndOfFile()
+        } else if let master = ProcessInfo.processInfo.environment["TERMHUB_VAULT_MASTER"], !master.isEmpty {
+            importVault = CredentialVault.fileExists()
+                ? try CredentialVault.unlock(masterPassword: master)
+                : try CredentialVault.create(masterPassword: master)
+            data = try Data(contentsOf: URL(fileURLWithPath: pathArg))
         } else {
             data = try Data(contentsOf: URL(fileURLWithPath: pathArg))
+        }
+        func vaultForImport() throws -> CredentialVault {
+            if let importVault { return importVault }
+            throw CredentialVault.VaultError.wrongMasterPassword
         }
         let list = try JSONDecoder().decode([ImportHost].self, from: data)
         let carriesSecrets = list.contains { $0.password != nil || $0.keyPath != nil }
@@ -199,7 +238,7 @@ if let importIndex = args.firstIndex(of: "--import"), importIndex + 1 < args.cou
             context.insert(host)
             try context.save()
             if item.auth == "password", let password = item.password {
-                try KeychainStore.save(password, kind: .password, hostID: host.id)
+                try vaultForImport().save(password, hostID: host.id, kind: .password)
             }
             print("✅ 已导入 \(item.alias) -> \(item.username)@\(item.hostname)\(item.proxyHost.map { "（经 \($0)）" } ?? "")")
             imported += 1
@@ -219,6 +258,12 @@ if let importIndex = args.firstIndex(of: "--import"), importIndex + 1 < args.cou
 // 拿去搜索所有落盘文件的字节（store/偏好/片段/known_hosts），命中即明文泄漏。
 if args.contains("--security-audit") {
     do {
+        // 审计凭据源 = 自管加密库（未提供主密码时仅扫文件不比对凭据）
+        var auditVault: CredentialVault?
+        if let master = ProcessInfo.processInfo.environment["TERMHUB_VAULT_MASTER"], !master.isEmpty,
+           CredentialVault.fileExists() {
+            auditVault = try CredentialVault.unlock(masterPassword: master)
+        }
         let container = try AppStorage.makeSharedContainer()
         let context = ModelContext(container)
         let hosts = try context.fetch(FetchDescriptor<SSHHost>())
@@ -245,8 +290,8 @@ if args.contains("--security-audit") {
         var leaks = 0
         print("开始读取钥匙串凭据（若钥匙串已锁，此处会等待解锁——在弹窗里输入登录密码即可）…")
         for host in hosts {
-            for kind in [KeychainStore.SecretKind.password, .passphrase] {
-                guard let secret = KeychainStore.read(kind: kind, hostID: host.id),
+            for kind in [CredentialVault.Kind.password, .passphrase] {
+                guard let secret = auditVault?.read(hostID: host.id, kind: kind),
                       !secret.isEmpty else { continue }
                 secretCount += 1
                 // 短密码（<6 字符）作为子串会命中大量正常数据（如用户名 mw），字节搜索不可判，跳过

@@ -174,24 +174,11 @@ func toolDefinitions() -> [[String: Any]] {
 
 // MARK: - 工具执行
 
-// --set-password <别名> <密码>：本地 CLI 维护模式（并非 MCP 工具，AI 调不到）
-let cliArgs = Array(CommandLine.arguments.dropFirst())
-if cliArgs.first == "--set-password", cliArgs.count >= 3 {
-    let alias = cliArgs[1]
-    let password = cliArgs[2]
-    do {
-        let dir = try HostDirectory()
-        guard let snapshot = dir.find(alias: alias) else {
-            FileHandle.standardError.write(Data("找不到主机别名：\(alias)\n".utf8))
-            exit(1)
-        }
-        try KeychainStore.save(password, kind: .password, hostID: snapshot.id)
-        print("✅ 已保存 \(alias) 的密码到 Keychain")
-        exit(0)
-    } catch {
-        FileHandle.standardError.write(Data("保存失败：\(error.localizedDescription)\n".utf8))
-        exit(1)
-    }
+// 凭据入口已收敛到 GUI 加密库：--set-password 已按设计移除（密码只在 GUI 录入）
+
+// MCP 凭据通道：GUI 已解锁时经本机 socket 取单条凭据；未运行/锁定时连接报解锁指引
+CredentialBridge.provider = { hostID, kind in
+    VaultCredentialClient.fetch(hostID: hostID, kind: kind)
 }
 
 let directory: HostDirectory

@@ -158,7 +158,7 @@ public final class AppState {
         session.ssh.close()
     }
 
-    func closeSession(hostID: UUID) {
+    public func closeSession(hostID: UUID) {
         sessions[hostID]?.ssh.close()
         sessions[hostID] = nil
         if selectedHostID == hostID {
