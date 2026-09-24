@@ -16,6 +16,7 @@ public enum SSHSetupError: LocalizedError {
     case proxyTunnelFailed(proxy: String, detail: String)
     case jumpConnectFailed(hop: String, detail: String)
     case connectionTimeout(seconds: Int)
+    case keychainLocked
 
     public var errorDescription: String? {
         switch self {
@@ -23,6 +24,11 @@ public enum SSHSetupError: LocalizedError {
             return """
             连接超时（\(seconds) 秒）——主机或代理不可达。
             请确认网络/VPN 已连好，或主机地址是否正确，然后点「重新连接」。
+            """
+        case .keychainLocked:
+            return """
+            登录钥匙串已被系统锁定（睡眠/屏保后常见）。
+            解锁一次即可恢复：点「重新连接」，在弹出的系统窗口输入 Mac 登录密码（可勾选始终允许）。
             """
         case .notConnected:
             return "会话未连接，请先连接主机"
@@ -128,7 +134,15 @@ public enum SSHConnectionFactory {
         overridePassword: String? = nil,
         overridePassphrase: String? = nil
     ) async throws -> SSHConnection {
-        try await withConnectTimeout(Self.connectTimeout) {
+        // 密码认证且非表单临时密码：先探测钥匙串锁定状态——
+        // 锁定时快速失败给明确指引，而不是每台主机的读取各自挂起连环弹系统解锁框
+        if host.authMethod == .password, overridePassword == nil {
+            let unlocked = await KeychainStore.probeUnlocked()
+            if !unlocked {
+                throw SSHSetupError.keychainLocked
+            }
+        }
+        return try await withConnectTimeout(Self.connectTimeout) {
             try await connectUnprotected(
                 to: host, hostKeyCallback: hostKeyCallback, jumpHosts: jumpHosts,
                 overridePassword: overridePassword, overridePassphrase: overridePassphrase

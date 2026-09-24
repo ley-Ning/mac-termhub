@@ -3,6 +3,39 @@ import Security
 
 /// Keychain 封装：主机密码与私钥口令只存这里，绝不落明文文件。
 public enum KeychainStore {
+    /// 探测登录钥匙串是否解锁：后台试读哨兵条目，2.5 秒内无结果（挂起等弹窗）视为已锁定。
+    /// 锁定时这次读取会触发一个系统解锁框——作为统一解锁入口（每轮连接至多一个，而非每主机连环弹）。
+    public static func probeUnlocked() async -> Bool {
+        let sentinel = "com.termhub.host.8F2BB98D-7C66-4ADC-9D5A-E08606B98FC9.password"
+        let service = sentinel as CFString
+        // 挂起的真实读取可能晚于超时返回——continuation 只允许 resume 一次，用 once 盒防双 resume
+        final class ResumeOnce: @unchecked Sendable {
+            private let lock = NSLock()
+            private var resumed = false
+            func run(_ body: () -> Void) {
+                lock.lock(); defer { lock.unlock() }
+                if !resumed { resumed = true; body() }
+            }
+        }
+        let once = ResumeOnce()
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                let query: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: service,
+                    kSecReturnAttributes as String: true,
+                ]
+                var result: CFTypeRef?
+                // attributes 模式读取：条目存在（无论密码内容）即解锁；锁定态挂起或报 notAllowed
+                let status = SecItemCopyMatching(query as CFDictionary, &result)
+                once.run { continuation.resume(returning: status != errSecInteractionNotAllowed) }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2.5) {
+                once.run { continuation.resume(returning: false) }
+            }
+        }
+    }
+
     public enum SecretKind: String {
         case password
         case passphrase
